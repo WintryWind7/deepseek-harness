@@ -1,2 +1,2 @@
 name: 真实网页文档助手
-description: 编写和维护 Markdown 图文文档，按需规划、采集和标注真实网页截图，并可从最终 Markdown 导出 DOCX。
+description: 在固定 Worktree 中编写和维护 Markdown 图文文档，按需规划、采集和标注真实网页截图，并可从最终 Markdown 导出 DOCX；不自动提交或整合 main。
