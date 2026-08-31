@@ -32,7 +32,7 @@
   name: '@deepseek-ai/dsh-persona'
   config:
     text: |
-      你是全栈开发 Agent，当前工作目录是 {{cwd}}。
+      你是全栈截图开发 Agent，当前工作目录是 {{cwd}}。对于前端改动，使用真实浏览器检查页面、操作流程和截图；截图仅用于本轮视觉验证，除非用户明确要求，否则不作为交付文件。
 
       开发文档默认外置在 `D:\why\docs\{{project}}`，不上本仓库 git。外置产品规划文档位于其中的 `prd\`，开发助手始终只读，严禁新建、修改、移动或删除。项目内 `docs` 不属于代码实现的自动同步范围：不得为了匹配当前代码、记录开发过程或完善交付材料而顺手修改；完成用户目标确实需要修改项目内文档时，先说明目标文件、原因、主要内容和是否随代码提交并获得确认，用户已经明确要求的不得重复确认。默认不要先遍历文档目录。
 
@@ -194,7 +194,7 @@
 
       在 worktree 中执行能够覆盖本次提交的最窄测试、静态检查和必要构建。局部文案、样式、测试或不影响某一端产物的修改，不为形式重建未受影响的前端、后端、Docker 镜像或其它项目产物。不要默认运行耗时的完整测试套件，也不要在 worktree 中额外占用共享前后端端口。
 
-      页面访问、接口联动、登录权限、数据库交互、状态刷新和业务流程等运行验收，在本次提交安全整合到 main、更新受影响的共享服务后，只对本次改动实际影响的流程执行。
+      页面访问、接口联动、登录权限、数据库交互、状态刷新和业务流程等运行验收，在本次提交安全整合到 main、更新受影响的共享服务后，只对本次改动实际影响的流程执行。前端或浏览器可见改动仍必须遵循本 preset 的浏览器验证与截图检查规则；后端、数据库或非渲染修改不因此触发截图流程。
 
       如果审查需要临时脚本、临时测试数据、请求夹具、日志、截图或其他一次性文件，统一放在当前 worktree 的 `qa-tmp/<当前会话短ID>/` 下。该目录可以保留在专属 worktree 中供后续排查，但必须保持为 Git 忽略内容，禁止 `git add`、禁止提交，也不得把临时测试文件放入正式源码或正式测试目录。
 
@@ -305,6 +305,18 @@
   config:
     completionDelivery: quiet
 
+# Browser verification belongs only to this implementation preset. The Web
+# profile installs the plugin outside the Harness workspace, so dynamic false
+# defers package resolution from preset health discovery to the profile Loader.
+# The bundled skill is replaced below so screenshots become model inputs through
+# `read_image` instead of user-facing evidence files.
+- id: preview
+  name: dsh-preview
+  disabled: !!js 'false'
+  config:
+    screenshotDir: 'C:\Users\Administrator\AppData\Local\Temp\dsh-preview-worktree-screenshot'
+    registerSkill: false
+
 # ── skills ──────────────────────────────────────────────────────────────────
 
 # The skill REGISTRY lives in the host composition and is layered per scope:
@@ -316,7 +328,7 @@
   name: '@deepseek-ai/dsh-skill-filesystem'
   config:
     customSkillDirs:
-      - 'C:\Users\Administrator\.dsh\.agent-presets\worktree-dev\skills'
+      - 'C:\Users\Administrator\.dsh\.agent-presets\worktree-screenshot\skills'
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
