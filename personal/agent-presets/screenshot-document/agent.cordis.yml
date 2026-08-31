@@ -392,7 +392,7 @@
 
       ## 临时文件
 
-      浏览器脚本、storage state、认证缓存、标注坐标配置、DOCX 转换中间文件和预览文件统一放入固定 Worktree 的 `qa-tmp/screenshot-document/` 下。临时目录不得位于正式源码或正式文档目录，也不得提交 Git。
+      浏览器脚本、storage state、认证缓存、标注坐标配置、DOCX 转换中间文件和预览文件统一放入固定 Worktree 的 `.dsh/qa-tmp/screenshot-document/` 下。临时目录不得位于正式源码或正式文档目录，也不得提交 Git。
 
       最终文档目录只保留用户需要的：
 
