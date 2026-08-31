@@ -308,11 +308,14 @@
   config:
     completionDelivery: quiet
 
-# Browser verification belongs only to this implementation preset. The plugin's
-# bundled skill is replaced below so screenshots become model inputs through
+# Browser verification belongs only to this implementation preset. The Web
+# profile installs the plugin outside the Harness workspace, so dynamic false
+# defers package resolution from preset health discovery to the profile Loader.
+# The bundled skill is replaced below so screenshots become model inputs through
 # `read_image` instead of user-facing evidence files.
 - id: preview
   name: dsh-preview
+  disabled: !!js 'false'
   config:
     screenshotDir: 'C:\Users\Administrator\AppData\Local\Temp\dsh-preview-worktree-dev'
     registerSkill: false
@@ -335,12 +338,12 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
+# The goal service and session driver stay on the host plane, where the Gateway
+# can resolve them. The human command and model-facing tool register into this
+# preset's scoped layers.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 

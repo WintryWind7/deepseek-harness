@@ -40,11 +40,20 @@ export class AppWebEntry {
 
   /**
    * Load and activate every client entry, then hand the mount point to the
-   * UI renderer. Plugin failures remain visible on the boot page.
+   * UI renderer. First-party and bootstrap plugin failures stay on the boot
+   * page; a third-party plugin that fails to apply is logged and skipped so
+   * one marketplace package cannot brick the shell.
    * @returns Resolves after application mount or failure rendering.
    */
   async run(): Promise<void> {
     try {
+      // Boot-readiness gate: whichever bootstrap applies the injection table
+      // settles this deferred once every row has taken effect — the served
+      // index resolves it in the rendered tail, so the await returns on the
+      // next microtask; an asynchronous bootstrap resolves it after its last
+      // row, or rejects it into the failure rendering below. An absent global
+      // means no bootstrap owns the document and there is nothing to wait for.
+      await (globalThis as { __DSH_BOOT_READY__?: { promise: Promise<void> } }).__DSH_BOOT_READY__?.promise
       const win = globalThis as DshWindow
       const moduleLoader = win.__ModuleLoader__
       if (moduleLoader === undefined) {
@@ -93,15 +102,8 @@ export class AppWebEntry {
     await mounted
   }
 
-  /** Prefetch stage-one bundles; their import path owns any eventual failure. */
+  /** Prefetch stage-one bundles and their dynamic requests before concurrent plugin imports. */
   private async prefetchImmediateTier(): Promise<void> {
-    // A transport carrying loadBundle owns the bundle bytes; HTTP prefetch
-    // against its static deployment answers nothing. A transport without
-    // loadBundle leaves bundles on HTTP, prefetch included.
-    const transport = (globalThis as {
-      __DSH_TRANSPORT__?: { loadBundle?: unknown }
-    }).__DSH_TRANSPORT__
-    if (transport?.loadBundle !== undefined) return
     await Promise.all(this.manifest.plugins
       .filter(row => row.immediately)
       .map(row => this.modules.prefetch(row.id).catch((_prefetchError: unknown) => {
@@ -118,7 +120,13 @@ export class AppWebEntry {
     ctx.on('internal/status', (fiber) => {
       const entry = fiber.entry
       if (entry === undefined || entry.fiber === undefined) return
-      this.page.setState(entry.options.name, STATE_LABELS[entry.fiber.state])
+      const name = entry.options.name
+      const state = STATE_LABELS[entry.fiber.state]
+      if (state === 'failed' && !this.isRequiredPlugin(name)) {
+        console.error(`web boot: optional plugin ${name} failed`)
+        return
+      }
+      this.page.setState(name, state)
     })
 
     const rows = this.manifest.plugins.map(row => row.id)
@@ -126,34 +134,62 @@ export class AppWebEntry {
     await prefetching
     await Promise.all(rows.map(async (name) => {
       this.page.setState(name, 'loading')
-      const id = await loader.create({ name })
-      if (loader.resolve(id).fiber === undefined) this.page.setState(name, 'failed')
+      try {
+        const id = await loader.create({ name })
+        if (loader.resolve(id).fiber === undefined) {
+          if (this.isRequiredPlugin(name)) this.page.setState(name, 'failed')
+          else console.error(`web boot: optional plugin ${name} failed to import`)
+        }
+      } catch (reason) {
+        if (this.isRequiredPlugin(name)) {
+          this.page.setState(name, 'failed')
+          throw reason
+        }
+        console.error(`web boot: optional plugin ${name} failed to apply:`, reason)
+      }
     }))
 
     await loader.await()
     this.assertEntriesActive(ctx)
   }
 
-  /** Reject entries that failed import/apply or still wait on missing services. */
+  /**
+   * First-party packages and stage-one bootstrap rows. A failure here blocks
+   * application mount; anything else is a third-party plugin that must not.
+   */
+  private isRequiredPlugin(name: string): boolean {
+    if (name.startsWith('@deepseek-ai/')) return true
+    return this.manifest.plugins.some(row => row.id === name && row.immediately)
+  }
+
+  /** Reject required entries that failed import/apply or still wait on missing services. */
   private assertEntriesActive(ctx: Context): void {
     const failures: string[] = []
     for (const entry of ctx.loader.entries()) {
       const name = entry.options.name
       if (entry.fiber === undefined) {
-        failures.push(`${name}: import failed (see console for the import error)`)
+        const message = `${name}: import failed (see console for the import error)`
+        if (this.isRequiredPlugin(name)) failures.push(message)
+        else console.error(`web boot: ${message}`)
         continue
       }
       const state = STATE_LABELS[entry.fiber.state]
       if (state === 'active') continue
+      let message: string
       if (state === 'pending') {
         const missing = Object.keys(entry.fiber.inject).filter(service => ctx.get(service) === undefined)
-        failures.push(`${name}: pending (waiting for service${missing.length === 1 ? '' : 's'}: ${missing.join(', ') || 'unknown'})`)
+        message = `${name}: pending (waiting for service${missing.length === 1 ? '' : 's'}: ${missing.join(', ') || 'unknown'})`
       } else {
-        failures.push(`${name}: ${state}`)
+        message = `${name}: ${state}`
       }
+      if (this.isRequiredPlugin(name)) failures.push(message)
+      else console.error(`web boot: optional plugin ${message}`)
     }
     if (failures.length > 0) {
       throw new Error(`web boot: ${String(failures.length)} entr${failures.length === 1 ? 'y' : 'ies'} did not activate\n${failures.join('\n')}`)
+    }
+    if (ctx.get('uiRenderer') === undefined) {
+      throw new Error('web boot: uiRenderer did not activate')
     }
   }
 }
