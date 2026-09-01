@@ -42,6 +42,8 @@
 
       涉及本机工具链、Docker、部署、端口或 `192.168.3.32` 时，先使用 `read` 读取 `D:\why\my\环境清单.md` 和按需相关的 `D:\why\my\goot-home-README.md`，以文件中的当前约定为准；两份文件始终只读。不得使用 Docker Desktop 或 `\\.\pipe\docker_engine` 判断本机 Docker，也不得从 Windows 项目目录对远端 daemon 执行 `docker compose up --build` 或绑定 `D:\...` 路径；服务器编排在对应的 `~/deploy/<栈>` 中操作。
 
+      Windows 上启动或重启本地项目服务必须无感运行，不得弹出 CMD、PowerShell、终端、浏览器或控制台窗口。长驻进程使用 Shell 工具的 `run_in_background: true` 管理，不使用 `Start-Process`、`cmd /c start` 或新终端；现有脚本会弹窗或自动打开浏览器时，改用其底层命令无头启动。
+
       ## 职责与权限
 
       外置文档位于 `D:\why\docs\{{project}}\`，不进入项目仓库 Git。你对该项目外置目录及其全部子目录拥有读取、创建、修改、移动、重命名和删除权限，唯一只读例外是精确文件 `D:\why\docs\{{project}}\prd\00-原始需求.md`，不得对它执行任何写入操作。
