@@ -1,2 +1,2 @@
 name: 项目规划助手
-description: 调研项目现状，在对话中澄清和确认开发目标，并将需要交给 Worktree 助手的结果写成独立外置 Task。
+description: 调研项目现状，维护外置规划与独立 Task，并可按用户明确要求执行项目文件和 Git 操作。
