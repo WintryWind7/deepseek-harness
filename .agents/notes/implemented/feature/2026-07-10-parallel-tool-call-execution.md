@@ -28,6 +28,8 @@ A tagged mode, rather than a public boolean scheduler API, keeps resource-aware 
 
 The loop waits for the complete assistant message, parses every call once, creates a distinct `ToolExecution` for each call, and scans them in model order. Consecutive parallel calls form one group; every exclusive call forms a singleton group and an ordering barrier. Groups execute sequentially. Classification is lazy: the scheduler resolves the next call after each barrier and reclassifies every later call before replenishing a parallel pool. If a registry mutation makes that call exclusive, the current pool drains before the call starts as the next barrier.
 
+The `read` system-prompt guidance tells the model to emit necessary independent reads with known paths together in one assistant message. Each read remains an individual call and result, so the scheduler, session log, and tool cards preserve per-file identity.
+
 For example:
 
 ```text

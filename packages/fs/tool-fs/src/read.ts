@@ -70,7 +70,7 @@ export function applyReadTool(ctx: Context, caps: ReadToolCaps): void {
   ctx.systemPrompt.section({
     name: 'tool:read',
     order: FIRST_PARTY_SECTION_ORDER.TOOL_READ,
-    text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files.',
+    text: 'Use the read tool — not shell commands like cat — to inspect text files. Results include line numbers. Use offset and limit to continue reading large files. When several necessary text files have known paths and can be inspected independently, issue all their read calls together in one tool-call response so they run in parallel; do not wait for one independent read result before starting another.',
   })
 
   ctx.tools.register(defineTool({

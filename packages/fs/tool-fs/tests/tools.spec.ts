@@ -170,6 +170,7 @@ describe('registration', () => {
     const { ctx } = await setup()
     const prompt = renderPrompt(await ctx.systemPrompt.assemble())
     expect(prompt).toContain('Use the read tool')
+    expect(prompt).toContain('issue all their read calls together in one tool-call response')
     expect(prompt).toContain('Use the write tool')
     expect(prompt).toContain('Use the edit tool')
   })
