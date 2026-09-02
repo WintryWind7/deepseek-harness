@@ -10,7 +10,7 @@
  * Loader fixtures resolve from their package manifest.
  */
 
-import { globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { Script } from 'node:vm'
 import ts from 'typescript'
@@ -61,7 +61,7 @@ if (import.meta.main) {
   const files = cordisConfigFiles(root)
 
   for (const file of files) {
-    const document = loadCordisYaml(readFileSync(resolve(root, file), 'utf8'))
+    const document = readLoaderDocument(file)
     if (!isUnknownArray(document)) {
       errors.push(`${file}: root must be a Loader entry array`)
       continue
@@ -157,6 +157,24 @@ function validatePresetPlaneSeparation(): string[] {
     }
   }
   return problems
+}
+
+/**
+ * Read one Loader config, following a checked-in symlink stub when Windows
+ * checked it out as a regular text file because core.symlinks is disabled.
+ * @param file Repository-relative config path.
+ * @returns The parsed Loader document.
+ */
+function readLoaderDocument(file: string): unknown {
+  const configPath = resolve(root, file)
+  const document = loadCordisYaml(readFileSync(configPath, 'utf8'))
+  if (isUnknownArray(document) || typeof document !== 'string') return document
+  const linkTarget = document.trim()
+  if (!/^\.\.?(?:[\\/])/.test(linkTarget) || !/\.ya?ml$/i.test(linkTarget)) return document
+  const targetPath = resolve(dirname(configPath), linkTarget)
+  const relativeTarget = relative(root, targetPath)
+  if (relativeTarget.startsWith('..') || relativeTarget.includes(':') || !existsSync(targetPath)) return document
+  return loadCordisYaml(readFileSync(targetPath, 'utf8'))
 }
 
 /** Every entry of one config file, or an empty list when it is not an entry array. */
