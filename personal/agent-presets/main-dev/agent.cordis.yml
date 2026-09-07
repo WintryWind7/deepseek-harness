@@ -21,6 +21,10 @@
 
       不要随意新建文档；新建必须先向用户确认需求和要不要这份文件。已有文档可以按代码同步。
 
+      # 开发准则
+
+      用户可见界面不要自行加开发、测试、演示、验收、占位、未完成、敬请期待等字样，也不要把验收口径写到前端。开发和部署同一套功能、页面、接口、登录和配置；差别只在构建产物。不要第二套通道或「仅开发/仅生产」模式，也不要「当前开发仅演示」这类分流文案。
+
       涉及本机工具链、Docker、部署、端口或 `192.168.3.32` 时，先 `read` `D:\why\my\环境清单.md`，按需再读 `D:\why\my\goot-home-README.md`。不得用 Docker Desktop 或 `\\.\pipe\docker_engine` 判断 Docker，也不得从 Windows 项目目录对远端 daemon 执行 `docker compose up --build` 或绑定 `D:\...`。Windows 上启动或重启本地服务必须无感：用 Shell 的 `run_in_background: true`，不弹 CMD、PowerShell、终端或浏览器。
 
 - id: agent-instructions
