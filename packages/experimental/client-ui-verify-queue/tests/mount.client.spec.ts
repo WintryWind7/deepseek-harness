@@ -67,7 +67,7 @@ describe('verify-queue browser plugin', () => {
     const entry = b.ctx.slots.entries('shell.overlay')
       .find(candidate => candidate.component === VerifyQueueDrawer)
     expect(entry).toMatchObject({ options: { id: 'verify-queue', order: 80 } })
-    const actions = (entry!.inject as () => VerifyQueueDrawerInjected)()
+    const actions = (entry!.inject as unknown as () => VerifyQueueDrawerInjected)()
     expect(await actions.load('D:/p')).toEqual(emptyView)
     expect(await actions.setUi('D:/p', true, false)).toEqual(emptyView)
     expect(await actions.setVerified('D:/p', 'id', true)).toEqual(emptyView)
@@ -76,7 +76,7 @@ describe('verify-queue browser plugin', () => {
     await failing.activation
     const failEntry = failing.ctx.slots.entries('shell.overlay')
       .find(candidate => candidate.component === VerifyQueueDrawer)
-    const failActions = (failEntry!.inject as () => VerifyQueueDrawerInjected)()
+    const failActions = (failEntry!.inject as unknown as () => VerifyQueueDrawerInjected)()
     await expect(failActions.load('D:/p')).rejects.toBeTruthy()
     await expect(failActions.setUi('D:/p', true, false)).rejects.toBeTruthy()
     await expect(failActions.setVerified('D:/p', 'id', true)).rejects.toBeTruthy()

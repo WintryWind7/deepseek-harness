@@ -15,6 +15,7 @@ const view = (over: Partial<VerifyQueueView> = {}): VerifyQueueView => ({
 const kit = {
   sessionId: undefined,
   useSession: () => undefined,
+  useSessionPendingInteraction: selector => selector(undefined as never),
   t: (key: keyof typeof en) => en[key],
 }
 
