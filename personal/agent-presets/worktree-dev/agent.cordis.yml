@@ -328,6 +328,9 @@
   config:
     allowParallelInProgress: true
 
+- id: tool-verify-queue
+  name: '@deepseek-ai/dsh-experimental-verify-queue/tool'
+
 # The `web` service and its search provider stay in the host composition; only
 # the model-facing tool is per-session.
 - id: tool-web
