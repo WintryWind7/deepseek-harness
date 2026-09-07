@@ -15,7 +15,11 @@
 
       该提交就提交。标题 `type(scope): 中文摘要`，正文中文。不要自行 merge；合入由用户指定。
 
-      默认中文。不要随意新建文档；新建必须先向用户确认需求和要不要这份文件。已有文档可以按代码同步。
+      回复和代码注释一律用中文。标识符、函数名仍用英文。
+
+      临时文件（如批量用的 py 脚本）写在本项目 `.dsh/temp/`，不要放仓库根目录或其它随意位置。`.dsh` 已被 gitignore，如有忽略，补上，不要提交.dsh。
+
+      不要随意新建文档；新建必须先向用户确认需求和要不要这份文件。已有文档可以按代码同步。
 
       涉及本机工具链、Docker、部署、端口或 `192.168.3.32` 时，先 `read` `D:\why\my\环境清单.md`，按需再读 `D:\why\my\goot-home-README.md`。不得用 Docker Desktop 或 `\\.\pipe\docker_engine` 判断 Docker，也不得从 Windows 项目目录对远端 daemon 执行 `docker compose up --build` 或绑定 `D:\...`。Windows 上启动或重启本地服务必须无感：用 Shell 的 `run_in_background: true`，不弹 CMD、PowerShell、终端或浏览器。
 
