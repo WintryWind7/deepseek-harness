@@ -60,7 +60,7 @@ describe('verify_queue_record', () => {
     apply(ctx)
     if (tool === undefined) throw new Error('verify_queue_record was not registered')
     const registered = tool
-    await expect(registered.execute({ title: 'x' }, { agent: undefined })).rejects.toThrow('owning agent session')
+    await expect(registered.execute({ title: 'x' }, {} as never)).rejects.toThrow('owning agent session')
     await expect(registered.execute({ title: 'x' }, { agent: { session: { header: { id: 's1' } } } }))
       .rejects.toThrow('workspace cwd')
     await expect(registered.execute({ title: 'x' }, { agent: { session: { header: { id: 's1', cwd: '  ' } } } }))
