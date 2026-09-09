@@ -31,6 +31,9 @@ kind: "package-group"
 | [`verify-queue`](verify-queue/README.zh.md) | worktree-dev 已提交修复的项目验收队列 | `ctx.verifyQueue` |
 | [`client-ui-verify-queue`](client-ui-verify-queue/README.zh.md) | 验收队列的 Web 右缘抽屉 | — |
 | [`verify-queue-web-profile`](verify-queue-web-profile/README.zh.md) | 验收队列的源码 checkout Web 层 | — |
+| [`worktree-bind`](worktree-bind/README.zh.md) | 把会话绑定到 `.dsh/worktrees` 检出并注入该路径 | — |
+| [`client-ui-worktree-bind`](client-ui-worktree-bind/README.zh.md) | 选择或新建该 worktree 的输入框芯片 | — |
+| [`worktree-bind-web-profile`](worktree-bind-web-profile/README.zh.md) | worktree-bind 的源码 checkout Web 层 | — |
 | [`code-runtime-python`](code-runtime-python/README.zh.md) | 代码执行 seam 的 CPython 子进程后端 | `ctx.codeRuntime` |
 | [`inspector`](inspector/README.zh.md) | 用于 Host 调试、Client Runtime 检查、网络采集与 Cordis 树的跨 realm CDP hub | `ctx.inspector` |
 | [`tool-agent-team`](tool-agent-team/README.zh.md) | 让模型创建、发消息与协调 teammate 的九个工具 | 按作用域注册工具到 `ctx.tools` |

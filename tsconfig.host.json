@@ -309,6 +309,8 @@
     { "path": "./packages/experimental/agent-team-web-profile" },
     { "path": "./packages/experimental/verify-queue" },
     { "path": "./packages/experimental/verify-queue-web-profile" },
+    { "path": "./packages/experimental/worktree-bind" },
+    { "path": "./packages/experimental/worktree-bind-web-profile" },
     { "path": "./packages/workflow/workflow" },
     { "path": "./packages/workflow/workflow-worker-thread" },
     { "path": "./packages/workflow/tool-workflow" },

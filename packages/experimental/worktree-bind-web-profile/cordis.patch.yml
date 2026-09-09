@@ -1,0 +1,9 @@
+# Private worktree-bind Web layer. Apply after dsh-web-app so the Host
+# routes and composer chip mount together.
+
+- insert:
+    - id: worktree-bind
+      name: '@deepseek-ai/dsh-experimental-worktree-bind'
+
+    - id: ui-worktree-bind
+      name: '@deepseek-ai/dsh-experimental-client-ui-worktree-bind'
