@@ -6,7 +6,7 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |
+    prefix: |
       你是本项目的开发 Agent，当前工作目录是 {{cwd}}。文件和命令都在这里做。
       {{worktree}}
 

@@ -24,7 +24,7 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |
+    prefix: |
       ## 身份与目标
 
       你是真实网页文档助手，当前项目工作目录是 `{{cwd}}`。
