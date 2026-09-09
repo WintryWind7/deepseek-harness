@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
@@ -71,7 +73,7 @@ describe('worktree-bind plugin', () => {
       ROUTE_STATE, ROUTE_SELECT, ROUTE_CREATE, ROUTE_CLEAR,
     ])
 
-    const empty = await ctx.systemPrompt.assemble({ agent: { id: 's1' } })
+    const empty = await ctx.systemPrompt.assemble({ agent: { id: SessionId('s1') } as unknown as Agent })
     expect(renderPrompt(empty)).toContain('XY')
     expect(renderPrompt(empty)).not.toContain('Worktree')
 
@@ -120,7 +122,7 @@ describe('worktree-bind plugin', () => {
     const created = response()
     await create?.handler(request(ROUTE_CREATE, JSON.stringify({ sessionId: 's1', name: 'feat/plugin' })), created.res)
     expect(created.status()).toBe(200)
-    const bound = await ctx.systemPrompt.assemble({ agent: { id: 's1' } })
+    const bound = await ctx.systemPrompt.assemble({ agent: { id: SessionId('s1') } as unknown as Agent })
     expect(renderPrompt(bound)).toContain('feat/plugin')
     ctx.emit('session/event', { id: 's1', header: { cwd: root } } as never, { type: 'turn/end' } as never)
     ctx.emit('session/event', { id: 's1', header: { cwd: root } } as never, { type: 'turn/start' } as never)
@@ -130,7 +132,7 @@ describe('worktree-bind plugin', () => {
     const clear = web.routes.find(route => route.path === ROUTE_CLEAR)
     await clear?.handler(request(ROUTE_CLEAR, JSON.stringify({ sessionId: 's1' })), cleared.res)
     expect(cleared.status()).toBe(200)
-    const unbound = renderPrompt(await ctx.systemPrompt.assemble({ agent: { id: 's1' } }))
+    const unbound = renderPrompt(await ctx.systemPrompt.assemble({ agent: { id: SessionId('s1') } as unknown as Agent }))
     expect(unbound).toContain('XY')
     expect(unbound).not.toContain('feat/plugin')
 
@@ -167,13 +169,13 @@ describe('worktree-bind plugin', () => {
 
     const pending = await mount()
     await writeMarker(root, 's1', { path: worktreeSlot(root, 'feat/back'), branch: 'feat/back', pending: 'ensure' })
-    const restored = renderPrompt(await pending.systemPrompt.assemble({ agent: { id: 's1' } }))
+    const restored = renderPrompt(await pending.systemPrompt.assemble({ agent: { id: SessionId('s1') } as unknown as Agent }))
     expect(restored).toContain('feat/back')
     expect(restored).not.toContain('失效')
 
     const lost = await mount()
     await writeMarker(root, 's1', { path: worktreeSlot(root, 'feat/gone'), branch: 'feat/gone' })
-    const warned = renderPrompt(await lost.systemPrompt.assemble({ agent: { id: 's1' } }))
+    const warned = renderPrompt(await lost.systemPrompt.assemble({ agent: { id: SessionId('s1') } as unknown as Agent }))
     expect(warned).toContain('失效')
     expect(warned).toContain('feat/gone')
   })

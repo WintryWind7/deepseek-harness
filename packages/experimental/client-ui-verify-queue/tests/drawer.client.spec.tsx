@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { GlobalStandardProps, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { VerifyQueueView } from '@deepseek-ai/dsh-experimental-verify-queue/client'
 import { VerifyQueueDrawer } from '../src/client/Drawer.tsx'
 import { en } from '../src/client/locales.ts'
@@ -12,11 +13,19 @@ const view = (over: Partial<VerifyQueueView> = {}): VerifyQueueView => ({
   ...over,
 })
 
+const useResource = (() => ({
+  status: 'none' as const,
+  value: undefined,
+  failure: undefined,
+  reload: () => {},
+})) as GlobalStandardProps['useResource']
+
 const kit = {
   sessionId: undefined,
   useSession: () => undefined,
-  useSessionPendingInteraction: selector => selector(undefined as never),
-  t: (key: keyof typeof en) => en[key],
+  useSessionPendingInteraction: ((selector: (value: never) => unknown) => selector(undefined as never)) as GlobalStandardProps['useSessionPendingInteraction'],
+  t: ((key: string) => en[key as keyof typeof en] ?? key) as TranslateNS<'verify-queue'>,
+  useResource,
 }
 
 const rows: VerifyQueueView['rows'] = [

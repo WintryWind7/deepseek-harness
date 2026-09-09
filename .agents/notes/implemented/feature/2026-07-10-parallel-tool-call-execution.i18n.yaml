@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-07-10-parallel-tool-call-execution.md
-2026-07-10-parallel-tool-call-execution.md: 62f8d7506f0f44eccc75e3f5be30f5725d2abfb8
-2026-07-10-parallel-tool-call-execution.zh.md: 8c49985cbd901f0587c05e4266bec4896164475f
+2026-07-10-parallel-tool-call-execution.md: 8959e378f1db877fa307cb431fcae4b7fc54898a
+2026-07-10-parallel-tool-call-execution.zh.md: c165a8d0fa3d9c5a9dd64ee8cef7e91d4a061962
