@@ -36,6 +36,8 @@
 
 本节只在用户明确要求创建 commit 时适用。不要使用 `git add .`；只暂存明确的插件和登记文件路径，提交前检查 `git diff --cached --name-only` 和 `git diff --cached`，确保无关的已跟踪文件、未跟踪文件、生成文件和本机文件没有进入提交。
 
+`personal` 上的 `git commit` 和 `git push` 一律加 `--no-verify`（或 `LEFTHOOK=0`），不把官方 lefthook 的 pre-commit / pre-push 当门禁。需要的 typecheck 和构建仍按「验证」节在实现时跑，不靠钩子。
+
 提交说明保持聚焦，例如 `feat(experimental): add conversation enhancements`、`fix(experimental): restore usage totals` 和 `docs(personal): clarify fork rules`。可复用的 DSH 扩展点改动与私人插件业务实现使用不同提交。
 
 ## 文档和 Agent Note
@@ -56,7 +58,7 @@ Agent Note 是官方文档，只随上游同步进入本仓库。个人插件、
 
 `master` 只跟踪用户本次选定的官方目标，不放个人改动。同步前要求 `personal` 工作区干净，通过 `upstream` 获取官方 refs，保存移动前的 `master` commit 作为前一官方基线，确认目标是它的后继，然后在不切换 checkout 的情况下先把本地 `master` 引用推进到目标。当前 checkout 始终保持在 `personal`，因为本机 Agent preset 的 Junction 指向当前工作区中的 `personal/agent-presets/`。
 
-只把前一官方基线到新 `master` 之间的树差异以三方方式应用到 `personal`。逐个检查冲突，不得对整份文件盲目选择 ours 或 theirs：官方架构、公共包和正式数据格式以目标版本为基础，个人插件、预设和本文规定的行为按新架构重新适配。冲突解决后运行覆盖受影响范围的最小检查，并检查暂存内容；检查失败或冲突未解决时不创建同步提交。
+只把前一官方基线到新 `master` 之间的树差异以三方方式应用到 `personal`。逐个检查冲突，不得对整份文件盲目选择 ours 或 theirs：官方架构、公共包和正式数据格式以目标版本为基础，个人插件、预设和本文规定的行为按新架构重新适配。冲突解决后运行覆盖受影响范围的最小检查，并检查暂存内容；检查失败或冲突未解决时不创建同步提交。同步提交同样 `--no-verify`：官方树的门禁由上游 CI 承担。
 
 每次成功同步只在 `personal` 创建一个汇总提交，例如 `chore(upstream): sync dsh 0.1.1 to 0.1.2`；该提交是前一官方基线到目标之间全部变化的 squash 结果。上游范围内的单个 commit 不进入 `personal` 的祖先历史。同步提交正文使用 `Upstream-From` 和 `Upstream-To` trailer 记录精确官方 commit；它们不是备份，而是 `personal` 已经吸收的官方区间书签，供同步中断恢复和后续增量核对。推送 `origin/master` 或 `origin/personal` 仍需用户另行明确要求。
 
@@ -73,7 +75,7 @@ $patch = Join-Path $env:TEMP 'dsh-upstream-sync.patch'
 git diff --binary --full-index --output=$patch $previous $target
 git apply --3way --index $patch
 # 逐个解决冲突，运行相关检查，并检查 git diff --cached
-git commit -m 'chore(upstream): sync dsh <上一版本> to <目标版本>' `
+git commit --no-verify -m 'chore(upstream): sync dsh <上一版本> to <目标版本>' `
   -m "Upstream-From: $previous`nUpstream-To: $target"
 Remove-Item -LiteralPath $patch
 ```
