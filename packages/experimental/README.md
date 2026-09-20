@@ -1,5 +1,5 @@
 ---
-description: "The experimental group map: private prototypes and internal-only plugins excluded from official releases, for users and maintainers navigating the group."
+description: "The experimental group map: publicly installable pre-stable prototypes."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The experimental group contains prototype capabilities that are not part of any official release: they run on the real harness, but their contracts can change and they carry no support promise. The group holds Agent Teams, the cross-realm Inspector, the CPython subprocess backend for the code-execution seam, and the browser-worker runtime and image packer used by preview deployments. Use these packages to try an unreleased capability; they carry no stability promise, and released products must not depend on them.
+The experimental group contains prototype capabilities whose contracts can change and carry no support promise. All current packages publish under their `@deepseek-ai/dsh-experimental-*` names, including the opt-in Agent Teams composition, Auto review, Cua Driver providers, browser-use backends, cross-realm Inspector, CPython PTC backend, and browser-worker preview libraries. Released products outside this group must not depend on experimental packages.
 
 ## Table of Contents
 
@@ -24,17 +24,21 @@ The experimental group contains prototype capabilities that are not part of any 
 
 | Package | Role | ctx key |
 |---|---|---|
-| [`agent-team-profile`](agent-team-profile/README.md) | Explicit source-checkout profile layer for Agent Teams | — |
+| [`agent-team-profile`](agent-team-profile/README.md) | Published opt-in profile layer for Agent Teams | — |
 | [`agent-team`](agent-team/README.md) | Named teammates with durable messages and a shared task board | `ctx.agentTeams` |
-| [`agent-team-web-profile`](agent-team-web-profile/README.md) | Explicit source-checkout Web layer for Agent Teams | — |
+| [`agent-team-web-profile`](agent-team-web-profile/README.md) | Published opt-in Web layer for Agent Teams | — |
 | [`client-ui-agent-team`](client-ui-agent-team/README.md) | Team roster, task board, and teammate navigation for Web | — |
-| [`verify-queue`](verify-queue/README.md) | Project verify queue of worktree-dev committed fixes | `ctx.verifyQueue` |
-| [`client-ui-verify-queue`](client-ui-verify-queue/README.md) | Right-edge Web drawer for the verify queue | — |
-| [`verify-queue-web-profile`](verify-queue-web-profile/README.md) | Source-checkout Web layer for the verify queue | — |
 | [`worktree-bind`](worktree-bind/README.md) | Bind a session to a `.dsh/worktrees` checkout and inject that path | — |
 | [`client-ui-worktree-bind`](client-ui-worktree-bind/README.md) | Composer chip for selecting or creating that worktree | — |
 | [`worktree-bind-web-profile`](worktree-bind-web-profile/README.md) | Source-checkout Web layer for worktree-bind | — |
-| [`code-runtime-python`](code-runtime-python/README.md) | CPython subprocess backend for the code-execution seam | `ctx.codeRuntime` |
+| [`auto-review`](auto-review/README.md) | Explicit Web layer for same-model review before each native or PTC inner tool call | — |
+| [`ptc-runtime-python`](ptc-runtime-python/README.md) | CPython subprocess backend for the PTC execution seam | `ctx.ptcRuntime` |
+| [`computer-use-cua-driver-mcp`](computer-use-cua-driver-mcp/README.md) | Use an installed Cua Driver through MCP | `ctx.computerUse` |
+| [`computer-use-cua-driver-native`](computer-use-cua-driver-native/README.md) | Embed the Cua Driver native npm runtime | `ctx.computerUse` |
+| [`browser-use-playwright-mcp`](browser-use-playwright-mcp/README.md) | Playwright browser tools over MCP | `ctx.browserUse` |
+| [`browser-use-chrome-devtools-mcp`](browser-use-chrome-devtools-mcp/README.md) | Chrome DevTools inspection and browser control over MCP | `ctx.browserUse` |
+| [`browser-use-stagehand-native`](browser-use-stagehand-native/README.md) | Stagehand browser operations with explicitly configured native models | `ctx.browserUse` |
+| [`browser-use-runtime`](browser-use-runtime/README.md) | Session-owned browser resources shared by experimental providers | — |
 | [`inspector`](inspector/README.md) | Cross-realm CDP hub for Host debugging, Client Runtime inspection, network capture, and Cordis trees | `ctx.inspector` |
 | [`tool-agent-team`](tool-agent-team/README.md) | Nine tools that let the model create, message, and coordinate teammates | registers scoped tools on `ctx.tools` |
 | [`webworker-packer`](webworker-packer/README.md) | Builds the gzip-compressed VFS image consumed by the browser worker preview | library and CLI — no ctx key |
@@ -45,7 +49,9 @@ The experimental group contains prototype capabilities that are not part of any 
 <a id="related-documentation"></a>
 ## Related documentation
 
-- [Experimental package decision](../../.agents/notes/implemented/architecture/2026-08-18-experimental-agent-teams-packages.md) — placement, release exclusion, and dependency isolation.
+- [Experimental publication decision](../../.agents/notes/implemented/process/2026-09-12-experimental-publication-denylist.md) — public defaults and private exceptions.
+- [Computer use](../../docs/subsystems/computer-use.md) — desktop provider choices.
+- [Browser use](../../docs/subsystems/browser-use.md) — browser provider choices and Session ownership.
 - [Agent Teams subsystem](../../docs/subsystems/agent-team.md) — durable Team types and the `ctx.agentTeams` service API.
 - [Experimental subtree rules](AGENTS.md) — what experimental status does and does not relax.
 
