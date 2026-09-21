@@ -28,9 +28,6 @@ kind: "package-group"
 | [`agent-team`](agent-team/README.zh.md) | 具名 teammate，成员之间持久消息与共享任务板 | `ctx.agentTeams` |
 | [`agent-team-web-profile`](agent-team-web-profile/README.zh.md) | Agent Teams 的公开 opt-in Web 层 | — |
 | [`client-ui-agent-team`](client-ui-agent-team/README.zh.md) | Web Team roster、任务板与 teammate 导航 | — |
-| [`worktree-bind`](worktree-bind/README.zh.md) | 把会话绑定到 `.dsh/worktrees` 检出并注入该路径 | — |
-| [`client-ui-worktree-bind`](client-ui-worktree-bind/README.zh.md) | 选择或新建该 worktree 的输入框芯片 | — |
-| [`worktree-bind-web-profile`](worktree-bind-web-profile/README.zh.md) | worktree-bind 的源码 checkout Web 层 | — |
 | [`auto-review`](auto-review/README.zh.md) | 显式 Web 层，在每个原生或 PTC inner 工具调用前使用同一模型审查 | — |
 | [`ptc-runtime-python`](ptc-runtime-python/README.zh.md) | PTC 执行 seam 的 CPython 子进程后端 | `ctx.ptcRuntime` |
 | [`computer-use-cua-driver-mcp`](computer-use-cua-driver-mcp/README.zh.md) | 通过 MCP 使用已安装的 Cua Driver | `ctx.computerUse` |

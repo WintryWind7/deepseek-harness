@@ -278,8 +278,6 @@
       "@deepseek-ai/dsh-experimental-webworker-packer": ["./packages/experimental/webworker-packer/src"],
       "@deepseek-ai/dsh-experimental-inspector": ["./packages/experimental/inspector/src"],
       "@deepseek-ai/dsh-experimental-inspector/client": ["./packages/experimental/inspector/src/client/index.ts"],
-      "@deepseek-ai/dsh-experimental-worktree-bind": ["./packages/experimental/worktree-bind/src"],
-      "@deepseek-ai/dsh-experimental-worktree-bind/src/*": ["./packages/experimental/worktree-bind/src/*"],
       "@deepseek-ai/dsh-experimental-ptc-runtime-python": ["./packages/experimental/ptc-runtime-python/src"],
       "@deepseek-ai/dsh-util-crypto": ["./packages/util/crypto/src"],
       "@deepseek-ai/dsh-util-values": ["./packages/util/values/src"],

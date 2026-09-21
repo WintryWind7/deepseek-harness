@@ -28,9 +28,6 @@ The experimental group contains prototype capabilities whose contracts can chang
 | [`agent-team`](agent-team/README.md) | Named teammates with durable messages and a shared task board | `ctx.agentTeams` |
 | [`agent-team-web-profile`](agent-team-web-profile/README.md) | Published opt-in Web layer for Agent Teams | — |
 | [`client-ui-agent-team`](client-ui-agent-team/README.md) | Team roster, task board, and teammate navigation for Web | — |
-| [`worktree-bind`](worktree-bind/README.md) | Bind a session to a `.dsh/worktrees` checkout and inject that path | — |
-| [`client-ui-worktree-bind`](client-ui-worktree-bind/README.md) | Composer chip for selecting or creating that worktree | — |
-| [`worktree-bind-web-profile`](worktree-bind-web-profile/README.md) | Source-checkout Web layer for worktree-bind | — |
 | [`auto-review`](auto-review/README.md) | Explicit Web layer for same-model review before each native or PTC inner tool call | — |
 | [`ptc-runtime-python`](ptc-runtime-python/README.md) | CPython subprocess backend for the PTC execution seam | `ctx.ptcRuntime` |
 | [`computer-use-cua-driver-mcp`](computer-use-cua-driver-mcp/README.md) | Use an installed Cua Driver through MCP | `ctx.computerUse` |
