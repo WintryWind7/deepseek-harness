@@ -1,0 +1,12 @@
+{
+  "name": "@deepseek-ai/dsh-experimental-personal-agent-presets",
+  "version": "0.1.7-alpha.2",
+  "private": true,
+  "type": "module",
+  "description": "Personal agent presets for the WintryWind7 dsh fork",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -28,7 +28,7 @@
 
 `C:\Users\Administrator\.dsh` 保存本机 profile、已安装的第三方插件、凭据、设置、会话和运行状态。这些机器配置和运行数据不复制进本仓库，也不提交到 Git；没有用户明确要求时不修改。
 
-`C:\Users\Administrator\.dsh\.agent-presets` 是指向 `personal/agent-presets/` 的目录 Junction。个人 preset、附带 Skill 和辅助脚本以仓库文件为准；通过全局路径创建或修改预设时，改动直接落入当前 `personal` 工作区。修改后的 composition 供后续新会话使用，已经运行的会话继续使用启动时挂载的版本。
+0.1.7 起官方不再扫描 `~/.dsh/.agent-presets` 目录。个人 preset 以 `personal/agent-presets/` 的 bundle（`package.json` + `cordis.patch.yml`）为准；Skill、persona 辅助脚本仍放在该目录。只有用户明确要求安装或链接时，才把该 bundle 写入 `C:\Users\Administrator\.dsh` 的 web profile。已在跑的会话继续使用启动时挂载的代际。
 
 截图、诊断脚本、日志和其他临时文件放在系统临时目录，不放进源码仓库。发现意外生成的仓库文件时先报告来源；只清理当前任务创建的临时文件或用户明确确认删除的文件，不删除无关的已跟踪或未跟踪内容，也不用宽泛忽略规则隐藏异常来源。
 
