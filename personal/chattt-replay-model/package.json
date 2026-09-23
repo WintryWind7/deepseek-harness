@@ -1,0 +1,17 @@
+{
+  "name": "dsh-chattt-replay-model",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Replay chattt assistant turns with the requested model id so thinking stays out of the message body.",
+  "exports": {
+    ".": "./index.mjs",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

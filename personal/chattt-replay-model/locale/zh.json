@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "chattt 思考回放",
+    "description": "只处理 chattt。把网关返回的模型别名改回请求 id，避免思考被写进正文。"
+  }
+}

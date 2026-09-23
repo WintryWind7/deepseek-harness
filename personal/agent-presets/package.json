@@ -7,8 +7,7 @@
   "exports": {
     "./package.json": "./package.json",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
-    "./project-planner/project-var.mjs": "./project-planner/project-var.mjs",
-    "./chattt-replay-model.mjs": "./chattt-replay-model.mjs"
+    "./project-planner/project-var.mjs": "./project-planner/project-var.mjs"
   },
   "dsh": {
     "bundle": {
