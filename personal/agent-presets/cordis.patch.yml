@@ -1226,3 +1226,9 @@
             config:
               fetch: false
               searchTimeoutMs: 60000
+
+# Host plugin. Rewrites chattt replay model ids when history is read.
+# Does not change llm-pi-ai, and does not touch other providers.
+- insert:
+    - id: chattt-replay-model
+      name: '@deepseek-ai/dsh-experimental-personal-agent-presets/chattt-replay-model.mjs'
