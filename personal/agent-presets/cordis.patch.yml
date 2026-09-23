@@ -43,7 +43,7 @@
                 Windows 上启动或重启本地服务必须无感：用 Shell 的 `run_in_background: true`，不弹 CMD、PowerShell、终端或浏览器。
 
           - id: env-readme
-            name: ./main-dev/env-readme.mjs
+            name: '@deepseek-ai/dsh-experimental-personal-agent-presets/main-dev/env-readme.mjs'
 
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
@@ -223,7 +223,7 @@
           # `{{project}}` is this preset's scoped basename of the session cwd.
           # Relative specifiers resolve from this composition directory.
           - id: project-prompt-var
-            name: ./project-planner/project-var.mjs
+            name: '@deepseek-ai/dsh-experimental-personal-agent-presets/project-planner/project-var.mjs'
 
           # The preset's own persona, shadowing the deployment default for this agent.
           # `{{cwd}}` resolves from the agent's workspace. `{{project}}` is registered
@@ -1057,7 +1057,7 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
-                - 'C:\Users\Administrator\.dsh\.agent-presets\screenshot-document\skills'
+                - 'D:\why\deepseek-harness\personal\agent-presets\screenshot-document\skills'
 
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'

@@ -28,7 +28,9 @@
 
 `C:\Users\Administrator\.dsh` 保存本机 profile、已安装的第三方插件、凭据、设置、会话和运行状态。这些机器配置和运行数据不复制进本仓库，也不提交到 Git；没有用户明确要求时不修改。
 
-0.1.7 起官方不再扫描 `~/.dsh/.agent-presets` 目录。个人 preset 以 `personal/agent-presets/` 的 bundle（`package.json` + `cordis.patch.yml`）为准；Skill、persona 辅助脚本仍放在该目录。只有用户明确要求安装或链接时，才把该 bundle 写入 `C:\Users\Administrator\.dsh` 的 web profile。已在跑的会话继续使用启动时挂载的代际。
+0.1.7 起官方不再扫描 `~/.dsh/.agent-presets` 目录。个人 preset 以 `personal/agent-presets/` 的 bundle（`package.json` + `cordis.patch.yml` 插入 `@deepseek-ai/dsh-agent-preset`）为准；Skill、persona 辅助脚本仍放在该目录。只有用户明确要求安装或链接时，才在 web profile 的 `package.json` 里 link 该 bundle。已在跑的会话继续使用启动时挂载的代际。
+
+Preset 里的插件 `name` 不要写 `./foo.mjs`：相对路径从 profile 目录解析，不是从 bundle 包目录。要用包名 subpath（例如 `@deepseek-ai/dsh-experimental-personal-agent-presets/main-dev/env-readme.mjs`），并在该 bundle 的 `package.json` `exports` 里登记。
 
 截图、诊断脚本、日志和其他临时文件放在系统临时目录，不放进源码仓库。发现意外生成的仓库文件时先报告来源；只清理当前任务创建的临时文件或用户明确确认删除的文件，不删除无关的已跟踪或未跟踪内容，也不用宽泛忽略规则隐藏异常来源。
 
@@ -56,7 +58,7 @@ Agent Note 是官方文档，只随上游同步进入本仓库。个人插件、
 
 只有用户明确要求并指定目标版本、标签或 commit 时才同步官方上游；发现新版本、版本跨度较大或本文提供了命令都不构成同步授权。用户只要求查看更新或评估冲突时不得应用改动或创建 commit；用户明确要求执行同步到指定目标时，才创建本节规定的单个同步 commit，但不自动推送任何远端。
 
-`master` 只跟踪用户本次选定的官方目标，不放个人改动。同步前要求 `personal` 工作区干净，通过 `upstream` 获取官方 refs，保存移动前的 `master` commit 作为前一官方基线，确认目标是它的后继，然后在不切换 checkout 的情况下先把本地 `master` 引用推进到目标。当前 checkout 始终保持在 `personal`，因为本机 Agent preset 的 Junction 指向当前工作区中的 `personal/agent-presets/`。
+`master` 只跟踪用户本次选定的官方目标，不放个人改动。同步前要求 `personal` 工作区干净，通过 `upstream` 获取官方 refs，保存移动前的 `master` commit 作为前一官方基线，确认目标是它的后继，然后在不切换 checkout 的情况下先把本地 `master` 引用推进到目标。当前 checkout 始终保持在 `personal`，因为本机 web profile 以 `link:` 指向工作区里的 `personal/agent-presets/`。
 
 只把前一官方基线到新 `master` 之间的树差异以三方方式应用到 `personal`。逐个检查冲突，不得对整份文件盲目选择 ours 或 theirs：官方架构、公共包和正式数据格式以目标版本为基础，个人插件、预设和本文规定的行为按新架构重新适配。冲突解决后运行覆盖受影响范围的最小检查，并检查暂存内容；检查失败或冲突未解决时不创建同步提交。同步提交同样 `--no-verify`：官方树的门禁由上游 CI 承担。
 

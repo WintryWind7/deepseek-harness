@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Personal agent presets for the WintryWind7 dsh fork",
+  "exports": {
+    "./package.json": "./package.json",
+    "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
+    "./project-planner/project-var.mjs": "./project-planner/project-var.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

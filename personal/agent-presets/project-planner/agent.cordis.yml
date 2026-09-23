@@ -22,7 +22,7 @@
 # `{{project}}` is this preset's scoped basename of the session cwd.
 # Relative specifiers resolve from this composition directory.
 - id: project-prompt-var
-  name: ./project-var.mjs
+  name: '@deepseek-ai/dsh-experimental-personal-agent-presets/project-planner/project-var.mjs'
 
 # The preset's own persona, shadowing the deployment default for this agent.
 # `{{cwd}}` resolves from the agent's workspace. `{{project}}` is registered
