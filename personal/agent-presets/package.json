@@ -6,6 +6,7 @@
   "description": "Personal agent presets for the WintryWind7 dsh fork",
   "exports": {
     "./package.json": "./package.json",
+    "./adapter.mjs": "./adapter.mjs",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
     "./project-planner/project-var.mjs": "./project-planner/project-var.mjs"
   },

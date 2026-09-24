@@ -1,0 +1,9 @@
+# 拼进每个个人预设。改这里会重新注册三个预设；单个预设的 rows 可以覆盖同一字段。
+rows:
+  compaction-basic:
+    config:
+      thresholdRatio: 0.6
+      modelPolicies:
+        - provider: chattt
+          model: step-5-preview
+          thresholdRatio: 0.5
