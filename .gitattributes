@@ -8,6 +8,13 @@
 
 *.pdf binary
 
+# Office fixtures are zip containers whose stored bytes are significant: the
+# e2e conversion tests read them verbatim. Without this, `text=auto eol=lf`
+# normalizes the LF bytes inside the deflate stream and corrupts the archive.
+*.docx binary
+*.xlsx binary
+*.pptx binary
+
 # Pairing records are generated from the three confirmed owner-blob pairs.
 # The worktree-local installer registers the fail-closed driver command.
 *.i18n.yaml merge=dsh-translation-pairing
