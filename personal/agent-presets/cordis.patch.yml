@@ -104,6 +104,12 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  thresholdRatio: 0.6
+                  modelPolicies:
+                    - provider: chattt
+                      model: step-5-preview
+                      thresholdRatio: 0.5
 
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
@@ -442,6 +448,8 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  thresholdRatio: 0.6
 
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
@@ -1119,6 +1127,8 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  thresholdRatio: 0.6
 
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
