@@ -1,0 +1,4 @@
+# Mounts the host row. The browser half registers the Personal settings section.
+- insert:
+    - id: personal-settings
+      name: dsh-personal-settings

@@ -1,0 +1,20 @@
+{
+  "name": "dsh-personal-settings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal settings shell: one Settings entry whose second level hosts configuration pages other personal plugins register.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings"]
+    }
+  }
+}
