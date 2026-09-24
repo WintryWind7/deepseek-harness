@@ -1,0 +1,23 @@
+{
+  "name": "dsh-git-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Git panel for the dsh Web composer: branch, upstream tracking, and uncommitted files.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "meta": {
+    "title": "Git Panel",
+    "description": "Shows the workspace Git branch, its upstream tracking state, and the uncommitted files from a composer button."
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}

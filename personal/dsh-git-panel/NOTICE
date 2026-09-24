@@ -1,0 +1,28 @@
+dsh-git-panel — third-party attribution
+=======================================
+
+This package adapts code and design from the dsh-web plugin family
+(https://github.com/zhu1090093659/dsh-web), package `dsh-git-graph`,
+which is licensed under the Apache License, Version 2.0.
+
+Files adapted, and how they differ from the original
+----------------------------------------------------
+
+lanes.js
+  Adapted from `packages/dsh-git-graph/src/core/types.ts` (`computeLanes`).
+  The package was changed to build its lane-waiting set from the commits the
+  current page actually renders, rather than from every parent any row names,
+  so a merge parent past the page edge ends its line at the boundary instead
+  of holding a column open to the end of the page. A safety cap on one row's
+  gutter was added, which the original does not have.
+
+client.js
+  The panel's layout, metrics, and stylesheet follow
+  `packages/dsh-git-graph/src/client/graph/GraphDialog.tsx` and its
+  `src/client/chips/context.module.css`. The panel adds a working-tree status
+  block and an uncommitted-files card, which the original dialog does not
+  have, and it renders through the shared `Modal` primitive rather than its
+  own backdrop.
+
+The Apache License, Version 2.0 text is at
+http://www.apache.org/licenses/LICENSE-2.0
