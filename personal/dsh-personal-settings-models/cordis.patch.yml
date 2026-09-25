@@ -1,0 +1,5 @@
+# Mounts the host row. The browser half registers the Models page into the
+# personal settings shell's `personal.settings.page` slot.
+- insert:
+    - id: personal-settings-models
+      name: dsh-personal-settings-models
