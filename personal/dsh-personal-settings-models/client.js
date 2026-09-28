@@ -16,11 +16,13 @@ window.__ModuleLoader__.load({
   id: 'dsh-personal-settings-models',
   factory(require) {
     const React = require('react')
-    const { createElement: h, useEffect, useState } = React
+    const { createElement: h, useEffect, useState, useSyncExternalStore } = React
 
     const NS = 'personal-settings-models'
     /** Slot the personal settings shell declares for configuration pages. */
     const PAGE = 'personal.settings.page'
+    /** Breadcrumb-row slot declared by the personal settings shell. */
+    const TOOLBAR = 'personal.settings.toolbar'
     /** Levels this page offers, in escalation order. `minimal` stays out of the checkboxes. */
     const LEVELS = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
     /** Request modalities a pi-ai model entry may declare. */
@@ -38,6 +40,7 @@ window.__ModuleLoader__.load({
       saveFailed: '保存失败。',
       conflict: '设置刚在别处改过。返回列表再进入这一页，然后重新保存。',
       save: '保存',
+      unsaved: '{count} 个更改未保存',
       model: '模型',
       modelId: '模型 id',
       context: '上下文长度',
@@ -65,6 +68,7 @@ window.__ModuleLoader__.load({
       saveFailed: 'Could not save.',
       conflict: 'These settings changed elsewhere. Go back, reopen this page, then save again.',
       save: 'Save',
+      unsaved: '{count} unsaved changes',
       model: 'Model',
       modelId: 'Model id',
       context: 'Context window',
@@ -125,8 +129,10 @@ window.__ModuleLoader__.load({
       .pm-check input { margin: 0; accent-color: var(--dsw-alias-state-business-primary); }
       .pm-check input:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary); }
       .pm-hint { margin: 0; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+      .pm-toolbar { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
+      .pm-dirty { font-size: 13px; color: var(--dsw-alias-state-error-primary); }
       .pm-save {
-        justify-self: start; border: none; border-radius: 8px; padding: 6px 12px;
+        margin-left: auto; flex: none; border: none; border-radius: 8px; padding: 6px 12px;
         background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-inverted);
         font-size: 13px; font-weight: 500; cursor: pointer;
       }
@@ -223,16 +229,65 @@ window.__ModuleLoader__.load({
       return next
     }
 
+    /** How many edited fields on one model a save would actually write. */
+    function changeCount(draft) {
+      const source = draft.source ?? {}
+      const next = applyDraft(source, draft)
+      let count = 0
+      if (textOf(next.name) !== textOf(source.name)) count += 1
+      if (next.contextWindow !== source.contextWindow) count += 1
+      if (next.maxTokens !== source.maxTokens) count += 1
+      if (fieldSignature(next.reasoningEfforts) !== fieldSignature(source.reasoningEfforts)) count += 1
+      if (fieldSignature(next.input) !== fieldSignature(source.input)) count += 1
+      return count
+    }
+
+    /** Stable comparison text for an efforts map or a modality list. */
+    function fieldSignature(value) {
+      if (Array.isArray(value)) return MODALITIES.filter(item => value.includes(item)).join(',')
+      if (value === null || typeof value !== 'object') return ''
+      return Object.keys(value).sort().map(key => `${key}:${value[key] === null ? '' : String(value[key])}`).join(',')
+    }
+
+    const toolbarIdle = { dirty: 0, disabled: true, save() {} }
+    const toolbarStore = {
+      current: toolbarIdle,
+      listeners: new Set(),
+    }
+
+    function publishToolbar(next) {
+      toolbarStore.current = next
+      for (const listener of toolbarStore.listeners) listener()
+    }
+
+    function subscribeToolbar(listener) {
+      toolbarStore.listeners.add(listener)
+      return () => { toolbarStore.listeners.delete(listener) }
+    }
+
+    function Toolbar() {
+      const bar = useSyncExternalStore(subscribeToolbar, () => toolbarStore.current, () => toolbarStore.current)
+      const t = Toolbar.t
+      return h('div', { className: 'pm-toolbar' },
+        bar.dirty > 0 ? h('span', { className: 'pm-dirty' }, t('unsaved', { count: bar.dirty })) : null,
+        h('button', {
+          type: 'button',
+          className: 'pm-save',
+          disabled: bar.disabled,
+          onClick: () => { bar.save() },
+        }, t('save')))
+    }
+
     function ModelsPage() {
       const t = ModelsPage.t
       const remote = ModelsPage.remote
-      const empty = { status: 'loading', error: '', notice: '', writable: false, providers: [] }
+      const empty = { status: 'loading', error: '', notice: '', writable: false, saving: false, providers: [] }
       const [state, setState] = useState(empty)
       const [expanded, setExpanded] = useState(undefined)
       const [openModels, setOpenModels] = useState(() => new Set())
 
-      const load = async () => {
-        setState(current => ({ ...current, status: 'loading', error: '', notice: '' }))
+      const load = async (quiet) => {
+        if (quiet !== true) setState(current => ({ ...current, status: 'loading', error: '', notice: '' }))
         const fail = (message) => {
           setState({ ...empty, status: 'error', error: message || t('loadFailed') })
         }
@@ -266,8 +321,8 @@ window.__ModuleLoader__.load({
             })
           }
           setState({
-            status: 'ready', error: '', notice: '',
-            writable: settings.value.writable === true, providers,
+            status: 'ready', error: '', notice: quiet === true ? t('saved') : '',
+            writable: settings.value.writable === true, saving: false, providers,
           })
         } catch (error) {
           fail(error instanceof Error ? error.message : String(error))
@@ -276,24 +331,47 @@ window.__ModuleLoader__.load({
 
       useEffect(() => { void load() }, [])
 
-      const written = async (run) => {
+      const saveAll = async () => {
+        const rows = state.providers.filter(row => row.models.some(model => changeCount(model) > 0))
+        if (rows.length === 0 || state.writable !== true || state.saving === true) return
+        setState(current => ({ ...current, saving: true, error: '', notice: '' }))
         try {
-          const response = await run()
-          if (!response.ok) {
-            const conflict = response.error?.code === 'settings/conflict'
-            setState(current => ({ ...current, notice: '', error: conflict ? t('conflict') : (response.error?.message || t('saveFailed')) }))
-            return
+          for (const row of rows) {
+            const response = await remote.settings.mutate(row.ns, [
+              { op: 'set', path: [...row.path, 'models'], value: row.models.map(draft => applyDraft(draft.source, draft)) },
+            ], row.revision)
+            if (!response.ok) {
+              const conflict = response.error?.code === 'settings/conflict'
+              setState(current => ({
+                ...current, saving: false, notice: '',
+                error: conflict ? t('conflict') : (response.error?.message || t('saveFailed')),
+              }))
+              return
+            }
           }
-          await load()
-          setState(current => ({ ...current, notice: t('saved') }))
+          await load(true)
         } catch (error) {
-          setState(current => ({ ...current, notice: '', error: error instanceof Error ? error.message : String(error) }))
+          setState(current => ({
+            ...current, saving: false, notice: '',
+            error: error instanceof Error ? error.message : String(error),
+          }))
         }
       }
 
-      const saveModels = (row) => written(async () => remote.settings.mutate(row.ns, [
-        { op: 'set', path: [...row.path, 'models'], value: row.models.map(draft => applyDraft(draft.source, draft)) },
-      ], row.revision))
+      useEffect(() => {
+        if (state.status !== 'ready') {
+          publishToolbar(toolbarIdle)
+          return
+        }
+        const dirty = state.providers.reduce((sum, row) => sum + row.models.reduce((count, model) => count + changeCount(model), 0), 0)
+        publishToolbar({
+          dirty,
+          disabled: state.writable !== true || state.saving === true || dirty === 0,
+          save: () => { void saveAll() },
+        })
+      })
+
+      useEffect(() => () => { publishToolbar(toolbarIdle) }, [])
 
       const patchModels = (provider, mapModel) => {
         setState(current => ({
@@ -418,8 +496,7 @@ window.__ModuleLoader__.load({
           })
           return h('section', { key: row.provider, className: 'pm-card' },
             head,
-            h('div', { className: 'pm-body' }, models,
-              h('button', { type: 'button', className: 'pm-save', disabled, onClick: () => { void saveModels(row) } }, t2('save'))))
+            h('div', { className: 'pm-body' }, models))
         })
 
       return h('div', { className: 'pm-page', 'data-dsh-plugin': 'personal-settings-models', 'data-dsh-part': 'models' },
@@ -432,6 +509,7 @@ window.__ModuleLoader__.load({
         const t = ctx.locale.bind(NS)
         ModelsPage.t = t
         ModelsPage.remote = ctx.remote
+        Toolbar.t = t
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'personal-settings-models: dictionaries')
         ctx.effect(() => {
           const style = document.createElement('style')
@@ -447,6 +525,11 @@ window.__ModuleLoader__.load({
           label: () => t('nav'),
           locale: NS,
         }, ModelsPage))
+        ctx.slots.inject(TOOLBAR, () => ctx.slots.register({
+          name: TOOLBAR,
+          id: 'models',
+          order: 10,
+        }, Toolbar))
       },
     }
   },

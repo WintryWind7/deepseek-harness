@@ -5,7 +5,8 @@
  * second half: one "个人" section whose own `personal.settings.page` slot other
  * personal plugins register their configuration pages into. This file owns the
  * two-level navigation only — the vertical list, the breadcrumb, and the pinned
- * head — and ships no configuration page of its own.
+ * head — and ships no configuration page of its own. An open page may fill
+ * `personal.settings.toolbar` on that breadcrumb row.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-personal-settings',
@@ -19,6 +20,8 @@ window.__ModuleLoader__.load({
     const NS = 'personal-settings'
     /** Slot other personal plugins register their configuration page into. */
     const PAGE = 'personal.settings.page'
+    /** Slot the open page fills on the breadcrumb row. */
+    const TOOLBAR = 'personal.settings.toolbar'
 
     const zh = {
       nav: '个人',
@@ -35,6 +38,8 @@ window.__ModuleLoader__.load({
          moves, and a page's own lead paragraph pins to the top of its body. */
       .ps-section { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; }
       .ps-head { flex: none; padding-bottom: 12px; }
+      .ps-headBar { display: flex; align-items: center; gap: 12px; min-width: 0; }
+      .ps-toolbarSlot { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
       .ps-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
       .ps-stickyTop {
         position: sticky; top: 0; z-index: 1;
@@ -96,14 +101,16 @@ window.__ModuleLoader__.load({
       // breadcrumb is the way back.
       return h('div', { className: 'ps-section' },
         h('div', { className: 'ps-head' },
-          h('nav', { className: 'ps-crumb', 'aria-label': props.t('nav') },
-            h('button', {
-              type: 'button',
-              className: 'ps-crumbLink',
-              onClick: () => { setOpenId(undefined) },
-            }, props.t('nav')),
-            h(IconChevronRightOutlineRegular, { size: 14, className: 'ps-crumbSep' }),
-            h('span', { className: 'ps-crumbCurrent' }, open.label))),
+          h('div', { className: 'ps-headBar' },
+            h('nav', { className: 'ps-crumb', 'aria-label': props.t('nav') },
+              h('button', {
+                type: 'button',
+                className: 'ps-crumbLink',
+                onClick: () => { setOpenId(undefined) },
+              }, props.t('nav')),
+              h(IconChevronRightOutlineRegular, { size: 14, className: 'ps-crumbSep' }),
+              h('span', { className: 'ps-crumbCurrent' }, open.label)),
+            h('div', { className: 'ps-toolbarSlot' }, props.renderSlot(TOOLBAR, {}, { only: open.id })))),
         h('div', { className: 'ps-scroll' },
           props.renderSlot(PAGE, {}, { only: open.id })))
     }
@@ -160,7 +167,10 @@ window.__ModuleLoader__.load({
           label: () => t('nav'),
           locale: NS,
           inject: sectionInjected,
-          children: { [PAGE]: { kind: 'list', scope: 'root' } },
+          children: {
+            [PAGE]: { kind: 'list', scope: 'root' },
+            [TOOLBAR]: { kind: 'list', scope: 'root' },
+          },
         }, PersonalSection))
       },
     }

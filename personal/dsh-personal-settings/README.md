@@ -14,7 +14,7 @@ ctx.slots.inject('personal.settings.page', () => ctx.slots.register({
 }, MyPage))
 ```
 
-`order` 决定列表里的位置，`id` 是该页的唯一键。插件的 `package.json` 里把 `dsh-personal-settings` 写进 `dsh.client.inject`，让外壳的客户端条目先加载；`ctx.slots.inject` 会等槽位声明完成，加载顺序不影响注册。
+进入某一页后，外壳在面包屑那一行留出 `personal.settings.toolbar`。用同一个 `id` 再注册一项，即可把未保存提示和保存按钮放在这一行。`order` 决定列表里的位置，`id` 是该页的唯一键。插件的 `package.json` 里把 `dsh-personal-settings` 写进 `dsh.client.inject`，让外壳的客户端条目先加载；`ctx.slots.inject` 会等槽位声明完成，加载顺序不影响注册。
 
 页面自己控制内容，包括一段可选的置顶介绍：给介绍段落加 `ps-stickyTop` 类（粘在滚动区顶部，背景同设置面板）。外壳的样式类都以 `ps-` 开头，只在本插件内生效。
 
