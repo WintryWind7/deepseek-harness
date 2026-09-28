@@ -1,0 +1,23 @@
+{
+  "name": "dsh-prompt-library",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prompt library for the dsh Web composer: pick a saved prompt into the input, and edit the library in the panel or in personal settings.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "meta": {
+    "title": "Prompt library",
+    "description": "Opens a composer panel of saved prompts and writes the chosen prompt into the input."
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "dsh-personal-settings"]
+    }
+  }
+}

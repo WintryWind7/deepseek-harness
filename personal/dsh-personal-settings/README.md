@@ -18,4 +18,4 @@ ctx.slots.inject('personal.settings.page', () => ctx.slots.register({
 
 页面自己控制内容，包括一段可选的置顶介绍：给介绍段落加 `ps-stickyTop` 类（粘在滚动区顶部，背景同设置面板）。外壳的样式类都以 `ps-` 开头，只在本插件内生效。
 
-模型配置页见 `dsh-personal-settings-models`。
+模型配置页见 `dsh-personal-settings-models`。提示词库见 `dsh-prompt-library`。
