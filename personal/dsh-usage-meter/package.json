@@ -1,0 +1,23 @@
+{
+  "name": "dsh-usage-meter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Adds a usage icon after the composer statistics row. The icon opens the current session's token detail and leaves the built-in readings in place.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "meta": {
+    "title": "Usage meter",
+    "description": "Adds a usage icon after the composer statistics. Opening it shows this session's turns, speed, tokens, and cache hit."
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}
