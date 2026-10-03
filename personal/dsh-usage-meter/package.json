@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Adds a usage icon after the composer statistics row. The icon opens the current session's token detail and leaves the built-in readings in place.",
+  "description": "Adds a usage icon after the composer statistics row. The icon opens this session's usage and totals summed from one stored record per model call since the plugin started listening.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -11,7 +11,7 @@
   },
   "meta": {
     "title": "Usage meter",
-    "description": "Adds a usage icon after the composer statistics. Opening it shows this session's turns, speed, tokens, and cache hit."
+    "description": "Adds a usage icon after the composer statistics. Opening it shows this session's usage and totals summed from one stored record per model call since the plugin started listening."
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

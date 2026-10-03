@@ -2,10 +2,15 @@
  * Browser half of dsh-usage-meter.
  *
  * Leaves the composer's own statistics pills and context ring alone. Adds one
- * icon after that row; the icon opens a usage card for the current Session.
+ * icon after that row; the icon opens a usage page for the current Session.
+ * The wide card reads the running total the Host has stored since this plugin
+ * started listening. With no stored total yet, every field is zero. Compaction
+ * token usage is included in that total and also kept as its own total. This
+ * Session's report sits in the narrow card and still comes from its own
+ * projections.
  * `sessionStats` supplies turns, steps, and decode speed. `tokenUsage` supplies
- * the billing buckets and cache hit. `contextPressure` supplies occupancy.
- * A subagent is a different Session, so its figures appear on its own screen.
+ * the billing buckets and cache hit. A subagent is a different Session, so its
+ * figures appear on its own screen.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-usage-meter',
@@ -21,9 +26,14 @@ window.__ModuleLoader__.load({
       trigger: '用量详情',
       title: '用量',
       close: '关闭',
+      session: '这个会话',
       empty: '这个会话还没有用量。',
+      ledger: '累计',
       turns: '轮次',
       steps: '步骤',
+      compaction: '压缩',
+      compactionNote: '只累计压缩。这些用量也已加进上方的累计，轮次、步骤和输出速度不含压缩。',
+      count: '次数',
       speed: '输出速度',
       speedValue: '{tps} tok/s',
       total: '合计',
@@ -34,17 +44,20 @@ window.__ModuleLoader__.load({
       output: '输出',
       cacheHit: '缓存命中',
       cacheHitValue: '{percent}%',
-      context: '上下文',
-      contextValue: '{percent}%',
       tokens: '{count} tok',
     };
     const en = {
       trigger: 'Usage details',
       title: 'Usage',
       close: 'Close',
+      session: 'This session',
       empty: 'This session has no usage yet.',
+      ledger: 'Running total',
       turns: 'Turns',
       steps: 'Steps',
+      compaction: 'Compaction',
+      compactionNote: 'Compaction only. These tokens are also in the running total above. Turns, steps, and output speed do not include compaction.',
+      count: 'Count',
       speed: 'Output speed',
       speedValue: '{tps} tok/s',
       total: 'Total',
@@ -55,8 +68,6 @@ window.__ModuleLoader__.load({
       output: 'Output',
       cacheHit: 'Cache hit',
       cacheHitValue: '{percent}%',
-      context: 'Context',
-      contextValue: '{percent}%',
       tokens: '{count} tok',
     };
 
@@ -80,21 +91,42 @@ window.__ModuleLoader__.load({
         display: flex; align-items: center; justify-content: center;
         background: var(--dsw-alias-bg-mask-2);
       }
-      .um-card {
-        width: min(380px, calc(100% - 32px));
-        padding: 16px 16px 12px;
+      .um-page {
+        width: min(920px, calc(100% - 48px));
+        min-height: 460px;
+        padding: 24px 24px 20px;
         border: 1px solid var(--dsw-alias-border-l2);
-        border-radius: 12px;
+        border-radius: 16px;
         background: var(--dsw-alias-bg-overlay);
         box-shadow: 0 12px 32px var(--dsw-alias-bg-mask-2);
         color: var(--dsw-alias-label-primary);
+      }
+      .um-board {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(200px, 0.62fr);
+        gap: 16px;
+        align-items: start;
+        margin-top: 20px;
+      }
+      .um-card {
+        min-width: 0;
+        padding: 8px;
+        border: 1px solid var(--dsw-alias-border-l1);
+        border-radius: 12px;
+      }
+      .um-cardTitle {
+        margin: 0;
+        padding: 8px 10px 4px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dsw-alias-label-secondary);
       }
       .um-header {
         display: flex; align-items: flex-start; justify-content: space-between;
         gap: 12px; padding: 0 4px;
       }
       .um-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
-      .um-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+      .um-title { margin: 0; font-size: 18px; font-weight: 600; color: var(--dsw-alias-label-primary); }
       .um-iconButton {
         display: inline-flex; align-items: center; justify-content: center;
         width: 26px; height: 26px; border: none; border-radius: 8px;
@@ -103,15 +135,9 @@ window.__ModuleLoader__.load({
       }
       .um-iconButton:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
       .um-iconButton:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
-      .um-box {
-        margin-top: 12px;
-        border: 1px solid var(--dsw-alias-border-l1);
-        border-radius: 10px;
-        padding: 4px;
-      }
       .um-row {
         display: flex; align-items: center; justify-content: space-between;
-        gap: 16px; padding: 7px 8px; border-radius: 8px; font-size: 12px;
+        gap: 16px; padding: 11px 12px; border-radius: 8px; font-size: 14px;
       }
       .um-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
       .um-name { color: var(--dsw-alias-label-secondary); }
@@ -119,9 +145,31 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary);
         font-variant-numeric: tabular-nums;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 12px;
+        font-size: 14px;
       }
-      .um-empty { padding: 20px 10px; text-align: center; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+      .um-empty {
+        margin: 0;
+        padding: 28px 12px;
+        text-align: center;
+        color: var(--dsw-alias-label-tertiary);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .um-session .um-cardTitle { font-size: 12px; }
+      .um-session .um-row { padding: 7px 10px; font-size: 12px; }
+      .um-session .um-value { font-size: 12px; }
+      .um-session .um-empty { padding: 16px 10px; font-size: 12px; }
+      .um-ledger .um-row { padding: 12px 14px; font-size: 15px; }
+      .um-ledger .um-value { font-size: 15px; }
+      .um-compactions { margin-top: 16px; }
+      .um-compactNote {
+        margin: 0; padding: 4px 12px 8px;
+        color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.5;
+      }
+      @media (max-width: 720px) {
+        .um-page { width: calc(100% - 24px); min-height: 0; padding: 16px; }
+        .um-board { grid-template-columns: 1fr; }
+      }
       @media (prefers-reduced-motion: reduce) {
         .um-trigger, .um-iconButton { transition: none; }
       }
@@ -222,26 +270,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @param pressure - the `contextPressure` projection.
-     * @returns occupancy percent, or null until both the numerator and the window exist.
-     */
-    function occupancy(pressure) {
-      if (pressure === null || pressure === undefined) return null;
-      const used = count(pressure.projectedTokens) ?? count(pressure.pressureTokens);
-      const window = count(pressure.contextWindow);
-      if (used === null || window === null || window <= 0) return null;
-      return Math.min(100, Math.round((used / window) * 100));
-    }
-
-    /**
-     * Rows for the open card. Missing buckets are omitted rather than shown as zero.
+     * Rows for the session card. Missing buckets are omitted rather than shown as zero.
      * @param stats - `sessionStats`, or absent.
      * @param usage - `tokenUsage`, or absent.
-     * @param pressure - `contextPressure`, or absent.
      * @param t - the `usage-meter` dictionary.
      * @returns label/value pairs, empty when this session has nothing to report.
      */
-    function rowsFor(stats, usage, pressure, t) {
+    function rowsFor(stats, usage, t) {
       const rows = [];
       if (stats !== null && stats !== undefined) {
         const turns = count(stats.turns);
@@ -280,11 +315,95 @@ window.__ModuleLoader__.load({
           if (hit !== null) rows.push({ key: 'cacheHit', name: t('cacheHit'), value: t('cacheHitValue', { percent: hit }) });
         }
       }
-      const percent = occupancy(pressure);
-      if (percent !== null) {
-        rows.push({ key: 'context', name: t('context'), value: t('contextValue', { percent }) });
-      }
       return rows;
+    }
+
+    /** Route the Host uses to publish the running total. */
+    const LEDGER_PATH = '/api/usage.meter';
+
+    /**
+     * Ledger rows. A missing record is all zeros, and cache write stays visible
+     * at zero so the card shows every field the Host keeps.
+     * @param record - the stored view, or null before the first successful read.
+     * @param t - the `usage-meter` dictionary.
+     * @returns the running total.
+     */
+    function ledgerRows(record, t) {
+      const turns = count(record?.turns) ?? 0;
+      const steps = count(record?.steps) ?? 0;
+      const decodeMs = count(record?.decodeMs) ?? 0;
+      const decodeTokens = count(record?.decodeTokens) ?? 0;
+      const uncached = count(record?.uncachedInputTokens) ?? 0;
+      const read = count(record?.cacheReadTokens) ?? 0;
+      const write = count(record?.cacheWriteTokens) ?? 0;
+      const output = count(record?.outputTokens) ?? 0;
+      const billed = uncached + read + write;
+      const speed = decodeMs > 0 ? formatSpeed(decodeTokens / (decodeMs / 1000)) : '0';
+      const tokens = (value) => t('tokens', { count: formatExact(value) });
+      return [
+        { key: 'turns', name: t('turns'), value: formatExact(turns) },
+        { key: 'steps', name: t('steps'), value: formatExact(steps) },
+        { key: 'speed', name: t('speed'), value: t('speedValue', { tps: speed }) },
+        { key: 'total', name: t('total'), value: t('totalValue', { count: formatExact(billed + output) }) },
+        { key: 'input', name: t('input'), value: tokens(uncached) },
+        { key: 'cacheRead', name: t('cacheRead'), value: tokens(read) },
+        { key: 'cacheWrite', name: t('cacheWrite'), value: tokens(write) },
+        { key: 'output', name: t('output'), value: tokens(output) },
+        { key: 'cacheHit', name: t('cacheHit'), value: t('cacheHitValue', { percent: cacheHit(read, billed) ?? '0' }) },
+      ];
+    }
+
+    /**
+     * @param rows - label/value pairs.
+     * @returns one row element per pair.
+     */
+    function rowList(rows) {
+      return rows.map(row => h('div', { key: row.key, className: 'um-row' },
+        h('span', { className: 'um-name' }, row.name),
+        h('span', { className: 'um-value' }, row.value)));
+    }
+
+    /**
+     * Compaction rows. A missing total is all zeros.
+     * @param record - the stored view, or null before the first successful read.
+     * @param t - the `usage-meter` dictionary.
+     * @returns the compaction total.
+     */
+    function compactionRows(record, t) {
+      const compaction = record?.compaction;
+      const times = count(compaction?.count) ?? 0;
+      const uncached = count(compaction?.uncachedInputTokens) ?? 0;
+      const read = count(compaction?.cacheReadTokens) ?? 0;
+      const write = count(compaction?.cacheWriteTokens) ?? 0;
+      const output = count(compaction?.outputTokens) ?? 0;
+      const billed = uncached + read + write;
+      const tokens = (value) => t('tokens', { count: formatExact(value) });
+      return [
+        { key: 'count', name: t('count'), value: formatExact(times) },
+        { key: 'total', name: t('total'), value: t('totalValue', { count: formatExact(billed + output) }) },
+        { key: 'input', name: t('input'), value: tokens(uncached) },
+        { key: 'cacheRead', name: t('cacheRead'), value: tokens(read) },
+        { key: 'cacheWrite', name: t('cacheWrite'), value: tokens(write) },
+        { key: 'output', name: t('output'), value: tokens(output) },
+        { key: 'cacheHit', name: t('cacheHit'), value: t('cacheHitValue', { percent: cacheHit(read, billed) ?? '0' }) },
+      ];
+    }
+
+    /**
+     * One labeled report card. The body is the row list, or the empty line.
+     * @param props.title - card heading.
+     * @param props.part - `data-dsh-part` value.
+     * @param props.className - extra card class.
+     * @param props.children - card body.
+     */
+    function ReportCard(props) {
+      return h('section', {
+        className: props.className,
+        'data-dsh-plugin': 'usage-meter',
+        'data-dsh-part': props.part,
+      },
+      h('h4', { className: 'um-cardTitle' }, props.title),
+      props.children);
     }
 
     /**
@@ -297,12 +416,31 @@ window.__ModuleLoader__.load({
       const project = props.useProjection;
       const t = props.t;
       const [open, setOpen] = useState(false);
+      const [ledger, setLedger] = useState(null);
       const triggerRef = useRef(null);
       const closeRef = useRef(null);
       const stats = typeof project === 'function' ? project('sessionStats') : undefined;
       const usage = typeof project === 'function' ? project('tokenUsage') : undefined;
-      const pressure = typeof project === 'function' ? project('contextPressure') : undefined;
-      const rows = typeof t === 'function' ? rowsFor(stats, usage, pressure, t) : [];
+      const rows = typeof t === 'function' ? rowsFor(stats, usage, t) : [];
+
+      useEffect(() => {
+        if (!open) return undefined;
+        let stopped = false;
+        const pull = () => {
+          fetch(LEDGER_PATH, { headers: { accept: 'application/json' } })
+            .then(response => (response.ok ? response.json() : null))
+            .then(body => {
+              if (!stopped && body !== null && typeof body === 'object') setLedger(body);
+            })
+            .catch(() => {});
+        };
+        pull();
+        const timer = setInterval(pull, 2000);
+        return () => {
+          stopped = true;
+          clearInterval(timer);
+        };
+      }, [open]);
 
       useEffect(() => {
         if (!open) return undefined;
@@ -328,16 +466,16 @@ window.__ModuleLoader__.load({
           },
         },
         h('div', {
-          className: 'um-card',
+          className: 'um-page',
           role: 'dialog',
           'aria-modal': true,
           'aria-label': t('title'),
           'data-dsh-plugin': 'usage-meter',
-          'data-dsh-part': 'dialog',
+          'data-dsh-part': 'page',
         },
         h('div', { className: 'um-header' },
           h('div', { className: 'um-heading' },
-            h(MeterIcon, { size: 16 }),
+            h(MeterIcon, { size: 18 }),
             h('h3', { className: 'um-title' }, t('title'))),
           h('button', {
             ref: closeRef,
@@ -347,12 +485,26 @@ window.__ModuleLoader__.load({
             title: t('close'),
             onClick: () => { setOpen(false); },
           }, h(CloseIcon))),
-        rows.length === 0
-          ? h('div', { className: 'um-empty' }, t('empty'))
-          : h('div', { className: 'um-box' },
-            rows.map(row => h('div', { key: row.key, className: 'um-row' },
-              h('span', { className: 'um-name' }, row.name),
-              h('span', { className: 'um-value' }, row.value)))))),
+        h('div', { className: 'um-board' },
+          h(ReportCard, {
+            title: t('ledger'),
+            part: 'ledger',
+            className: 'um-card um-ledger',
+          }, rowList(ledgerRows(ledger, t))),
+          h(ReportCard, {
+            title: t('session'),
+            part: 'session-card',
+            className: 'um-card um-session',
+          }, rows.length === 0
+            ? h('p', { className: 'um-empty' }, t('empty'))
+            : rowList(rows))),
+        h(ReportCard, {
+          title: t('compaction'),
+          part: 'compactions',
+          className: 'um-card um-compactions',
+        }, h('div', null,
+          h('p', { className: 'um-compactNote' }, t('compactionNote')),
+          rowList(compactionRows(ledger, t)))))),
         document.body)
         : null;
 
