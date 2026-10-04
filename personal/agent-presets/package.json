@@ -8,6 +8,7 @@
     "./package.json": "./package.json",
     "./adapter.mjs": "./adapter.mjs",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
+    "./team-dev/sessions.mjs": "./team-dev/sessions.mjs",
     "./project-planner/project-var.mjs": "./project-planner/project-var.mjs",
     "./locale/*.json": "./locale/*.json"
   },
