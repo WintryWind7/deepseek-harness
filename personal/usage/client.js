@@ -7,7 +7,8 @@
  * that card stay put, share one size, and each shows a few figures; choosing
  * one only changes the detail. The running total keeps one date control in
  * its note area; opening it lists the ranges over the rows. This process is
- * the default. The page keeps one width and height either way.
+ * the default, and the same range filters the running total, compaction, and
+ * model bars. The page keeps one width and height either way.
  * With no stored total yet, every field is zero.
  * Compaction token usage is included in the running total and also kept as its
  * own total. This Session's report sits in the narrow card and still comes
@@ -48,7 +49,13 @@ window.__ModuleLoader__.load({
       turns: '轮次',
       steps: '步骤',
       compaction: '压缩',
-      compactionNote: '全部压缩，不随累计的时间范围变化。轮次、步骤和输出速度不含压缩。',
+      models: '模型',
+      modelNote: '{scope}，按提供商里的模型汇总。合计含压缩。',
+      modelBrief: '{count} 个模型',
+      modelCount: '{count} 个模型',
+      barInput: '输入',
+      unknown: '未记录',
+      compactionNote: '{scope}。只累计压缩。这些用量也已加进累计，轮次、步骤和输出速度不含压缩。',
       views: '用量视图',
       ledgerBrief: '{turns} 轮 · {steps} 步',
       ledgerRangeBrief: '{range} · {turns} 轮 · {steps} 步',
@@ -88,7 +95,13 @@ window.__ModuleLoader__.load({
       turns: 'Turns',
       steps: 'Steps',
       compaction: 'Compaction',
-      compactionNote: 'All compaction, not the time range chosen on the running total. Turns, steps, and output speed do not include compaction.',
+      models: 'Models',
+      modelNote: '{scope}, summed by model within each provider. The total includes compaction.',
+      modelBrief: '{count} models',
+      modelCount: '{count} models',
+      barInput: 'Input',
+      unknown: 'Not recorded',
+      compactionNote: '{scope}. Compaction only. These tokens are also in the running total. Turns, steps, and output speed do not include compaction.',
       views: 'Usage views',
       ledgerBrief: '{turns} turns · {steps} steps',
       ledgerRangeBrief: '{range} · {turns} turns · {steps} steps',
@@ -321,10 +334,45 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.5;
         white-space: nowrap; text-overflow: ellipsis;
       }
-      .um-viewNoteAlone {
-        height: 84px; margin: 0 -12px; padding: 4px 12px 0;
-        white-space: normal;
+      .um-legend {
+        display: flex; flex-wrap: wrap; gap: 12px;
+        margin: 0; padding: 0 12px 8px;
+        color: var(--dsw-alias-label-secondary); font-size: 12px;
       }
+      .um-legendItem { display: inline-flex; align-items: center; gap: 6px; }
+      .um-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+      .um-cache { background: var(--dsw-alias-state-business-primary); }
+      .um-input { background: var(--dsw-static-deepseek-300); }
+      .um-output { background: var(--dsw-alias-state-success-primary); }
+      .um-provider {
+        margin: 10px 12px 2px;
+        font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-secondary);
+      }
+      .um-barRow {
+        padding: 6px 12px 8px; border-radius: 8px;
+      }
+      .um-barRow:hover,
+      .um-barRow:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none; }
+      .um-barName {
+        margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 13px; color: var(--dsw-alias-label-primary);
+      }
+      .um-track {
+        display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+      }
+      .um-seg { height: 100%; min-width: 0; }
+      .um-segOn { min-width: 2px; }
+      .um-tip {
+        position: fixed; z-index: 1200; width: max-content; max-width: 280px;
+        padding: 8px 10px; pointer-events: none;
+        border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px;
+        background: var(--dsw-alias-bg-overlay);
+        box-shadow: 0 8px 24px var(--dsw-alias-bg-mask-2);
+        color: var(--dsw-alias-label-primary); font-size: 12px;
+      }
+      .um-tipTitle { margin: 0 0 6px; font-weight: 500; }
+      .um-tipRow { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+      .um-tipLabel { color: var(--dsw-alias-label-secondary); }
       @media (max-width: 720px) {
         .um-page { width: calc(100vw - 24px); padding: 16px; }
         .um-board {
@@ -639,18 +687,17 @@ window.__ModuleLoader__.load({
     /**
      * Summary buttons for the main card. Each button keeps the same size and
      * stays in place; selecting one only changes which detail the card shows.
-     * @param record - the running total for the selected date range.
-     * @param overall - every stored call, used by the compaction button.
+     * @param record - the selected date range, shared by every summary button.
      * @param t - the `usage-meter` dictionary.
-     * @param view - `ledger` or `compaction`.
+     * @param view - `ledger`, `compaction`, or `models`.
      * @param range - the selected date range.
      * @param onSelect - chooses the detail.
      * @returns the button row.
      */
-    function viewSwitch(record, overall, t, view, range, onSelect) {
+    function viewSwitch(record, t, view, range, onSelect) {
       const turns = count(record?.turns) ?? 0;
       const steps = count(record?.steps) ?? 0;
-      const compaction = overall?.compaction;
+      const compaction = record?.compaction;
       return h('div', {
         className: 'um-switch',
         role: 'tablist',
@@ -679,7 +726,158 @@ window.__ModuleLoader__.load({
       },
       h('span', { className: 'um-switchName' }, t('compaction')),
       h('span', { className: 'um-switchTotal' }, t('totalValue', { count: formatExact(tokenTotal(compaction)) })),
-      h('span', { className: 'um-switchMeta' }, t('countBrief', { count: formatExact(count(compaction?.count) ?? 0) }))));
+      h('span', { className: 'um-switchMeta' }, t('countBrief', { count: formatExact(count(compaction?.count) ?? 0) }))),
+      h('button', {
+        type: 'button',
+        className: 'um-switchButton',
+        role: 'tab',
+        'aria-selected': view === 'models',
+        onClick: () => { onSelect('models'); },
+      },
+      h('span', { className: 'um-switchName' }, t('models')),
+      h('span', { className: 'um-switchTotal' }, t('totalValue', { count: formatExact(tokenTotal(record)) })),
+      h('span', { className: 'um-switchMeta' }, t('modelBrief', { count: formatExact(modelCount(record)) }))));
+    }
+
+    /**
+     * @param record - one date range.
+     * @returns how many models that range recorded.
+     */
+    function modelCount(record) {
+      const providers = record?.providers;
+      if (!Array.isArray(providers)) return 0;
+      let total = 0;
+      for (const group of providers) {
+        if (Array.isArray(group?.models)) total += group.models.length;
+      }
+      return total;
+    }
+
+    /**
+     * @param value - a stored provider or model name.
+     * @param t - the `usage-meter` dictionary.
+     * @returns the name, or the fallback when it was not recorded.
+     */
+    function recordedName(value, t) {
+      return value === '' ? t('unknown') : value;
+    }
+
+    /**
+     * @param model - one model total.
+     * @returns the three bar parts. Input on the bar includes cache write.
+     */
+    function barParts(model) {
+      const cache = count(model?.cacheReadTokens) ?? 0;
+      const uncached = count(model?.uncachedInputTokens) ?? 0;
+      const write = count(model?.cacheWriteTokens) ?? 0;
+      const output = count(model?.outputTokens) ?? 0;
+      return {
+        cache,
+        uncached,
+        write,
+        input: uncached + write,
+        output,
+        total: cache + uncached + write + output,
+      };
+    }
+
+    /**
+     * @param part - one segment.
+     * @param whole - the model total.
+     * @returns a percentage width.
+     */
+    function share(part, whole) {
+      if (whole <= 0 || part <= 0) return '0%';
+      return `${(part / whole) * 100}%`;
+    }
+
+    /**
+     * Horizontal bars for the selected date range. Every bar uses the largest
+     * model total as its scale. Hovering a bar shows the exact buckets.
+     * @param props.record - the selected date range.
+     * @param props.t - the `usage-meter` dictionary.
+     */
+    function ModelChart(props) {
+      const record = props.record;
+      const t = props.t;
+      const [tip, setTip] = useState(null);
+      const providers = Array.isArray(record?.providers) ? record.providers : [];
+      let max = 0;
+      let listed = 0;
+      for (const group of providers) {
+        if (!Array.isArray(group?.models)) continue;
+        for (const model of group.models) {
+          listed += 1;
+          const parts = barParts(model);
+          if (parts.total > max) max = parts.total;
+        }
+      }
+      if (listed === 0) return h('p', { className: 'um-empty' }, t('modelCount', { count: '0' }));
+      const place = (event, row) => {
+        const width = 240;
+        const height = 156;
+        const margin = 12;
+        let x = event.clientX + margin;
+        let y = event.clientY + margin;
+        if (x + width > window.innerWidth - 8) x = event.clientX - width - margin;
+        if (y + height > window.innerHeight - 8) y = event.clientY - height - margin;
+        setTip({ ...row, x, y });
+      };
+      const tipNode = tip === null ? null : createPortal(h('div', {
+        className: 'um-tip',
+        style: { left: `${tip.x}px`, top: `${tip.y}px` },
+      },
+      h('p', { className: 'um-tipTitle' }, `${tip.provider} / ${tip.model}`),
+      [
+        ['cacheHit', tip.cache],
+        ['input', tip.uncached],
+        ['cacheWrite', tip.write],
+        ['output', tip.output],
+        ['total', tip.total],
+      ].map(entry => h('div', { key: entry[0], className: 'um-tipRow' },
+        h('span', { className: 'um-tipLabel' }, t(entry[0])),
+        h('span', null, t('tokens', { count: formatExact(entry[1]) }))))), document.body);
+      return h('div', null,
+        h('div', { className: 'um-legend' },
+          h('span', { className: 'um-legendItem' }, h('i', { className: 'um-swatch um-cache' }), t('cacheHit')),
+          h('span', { className: 'um-legendItem' }, h('i', { className: 'um-swatch um-input' }), t('barInput')),
+          h('span', { className: 'um-legendItem' }, h('i', { className: 'um-swatch um-output' }), t('output'))),
+        providers.map(group => {
+          if (typeof group?.provider !== 'string' || !Array.isArray(group.models)) return null;
+          return h('section', { key: group.provider === '' ? 'unknown' : group.provider },
+            h('h5', { className: 'um-provider' }, recordedName(group.provider, t)),
+            group.models.map(model => {
+              if (typeof model?.model !== 'string') return null;
+              const parts = barParts(model);
+              const row = {
+                provider: recordedName(group.provider, t),
+                model: recordedName(model.model, t),
+                ...parts,
+              };
+              return h('div', {
+                key: model.model === '' ? 'unknown' : model.model,
+                className: 'um-barRow',
+                tabIndex: 0,
+                onMouseEnter: (event) => { place(event, row); },
+                onMouseMove: (event) => { place(event, row); },
+                onMouseLeave: () => { setTip(null); },
+                onFocus: (event) => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  place({ clientX: box.left, clientY: box.top }, row);
+                },
+                onBlur: () => { setTip(null); },
+              },
+              h('p', { className: 'um-barName' }, row.model),
+              h('div', {
+                className: 'um-track',
+                style: { width: max <= 0 ? '0%' : `${(parts.total / max) * 100}%` },
+              },
+              h('span', { className: parts.cache > 0 ? 'um-seg um-segOn um-cache' : 'um-seg um-cache', style: { width: share(parts.cache, parts.total) } }),
+              h('span', { className: parts.input > 0 ? 'um-seg um-segOn um-input' : 'um-seg um-input', style: { width: share(parts.input, parts.total) } }),
+              h('span', { className: parts.output > 0 ? 'um-seg um-segOn um-output' : 'um-seg um-output', style: { width: share(parts.output, parts.total) } })));
+            }));
+        }),
+        tipNode);
     }
 
     /**
@@ -775,7 +973,6 @@ window.__ModuleLoader__.load({
 
       if (typeof t !== 'function') return null;
       const selected = rangeView(ledger, range);
-      const overall = rangeView(ledger, 'all');
 
       const dialog = open
         ? createPortal(h('div', {
@@ -807,22 +1004,29 @@ window.__ModuleLoader__.load({
         h('div', { className: 'um-board' },
           h('div', { className: 'um-main' },
             h(ReportCard, {
-              title: view === 'compaction' ? t('compaction') : t('ledger'),
-              part: view === 'compaction' ? 'compactions' : 'ledger',
+              title: view === 'compaction' ? t('compaction') : view === 'models' ? t('models') : t('ledger'),
+              part: view === 'compaction' ? 'compactions' : view === 'models' ? 'models' : 'ledger',
               className: 'um-card um-ledger',
             }, view === 'compaction'
               ? h('div', null,
                 h('div', { className: 'um-viewHead' },
-                  h('p', { className: 'um-viewNote um-viewNoteAlone' }, t('compactionNote'))),
-                rowList(compactionRows(overall, t)))
-              : h('div', null,
-                h('div', { className: 'um-viewHead' },
                   rangeControl(ledger, t, range, menuOpen, setRange, setMenuOpen),
-                  h('p', { className: 'um-viewNote' }, t('ledgerNote', { scope: t(RANGE_SCOPE[range] ?? 'scopeBoot') }))),
-                rowList(ledgerRows(selected, t)))),
-            viewSwitch(selected, overall, t, view, range, (id) => {
+                  h('p', { className: 'um-viewNote' }, t('compactionNote', { scope: t(RANGE_SCOPE[range] ?? 'scopeBoot') }))),
+                rowList(compactionRows(selected, t)))
+              : view === 'models'
+                ? h('div', null,
+                  h('div', { className: 'um-viewHead' },
+                    rangeControl(ledger, t, range, menuOpen, setRange, setMenuOpen),
+                    h('p', { className: 'um-viewNote' }, t('modelNote', { scope: t(RANGE_SCOPE[range] ?? 'scopeBoot') }))),
+                  h(ModelChart, { record: selected, t }))
+                : h('div', null,
+                  h('div', { className: 'um-viewHead' },
+                    rangeControl(ledger, t, range, menuOpen, setRange, setMenuOpen),
+                    h('p', { className: 'um-viewNote' }, t('ledgerNote', { scope: t(RANGE_SCOPE[range] ?? 'scopeBoot') }))),
+                  rowList(ledgerRows(selected, t)))),
+            viewSwitch(selected, t, view, range, (id) => {
               setView(id);
-              if (id !== 'ledger') setMenuOpen(false);
+              setMenuOpen(false);
             })),
           h(ReportCard, {
             title: t('session'),

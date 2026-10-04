@@ -12,7 +12,8 @@
  * date windows filter on. `processStartedAt` is when this process began, and
  * the same instant is stored in `<plugin>/process.json`. The page's totals
  * are summed from those files when it asks, once for this process and again
- * for the rolling windows. A later
+ * for the rolling windows. Each window also groups those tokens by provider
+ * and model, including compaction. A later
  * message for the same session, turn, and step stands in for an earlier
  * attempt in that sum; both files stay. Nothing here is written back into
  * a Session log, and nothing is written into the harness `storages` directory.
@@ -341,6 +342,8 @@ function viewOf(calls, cutoff) {
   const chosen = new Map()
   const compaction = emptyBuckets()
   let compactionCount = 0
+  /** @type {Map<string, { provider: string, model: string, uncachedInputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, outputTokens: number }>} */
+  const byModel = new Map()
   if (calls !== undefined) {
     for (const [, row] of calls.entries()) {
       if (cutoff !== null && row.time < cutoff) continue
@@ -348,6 +351,7 @@ function viewOf(calls, cutoff) {
         compactionCount += 1
         for (const key of BUCKET_KEYS) compaction[key] += row[key]
         compaction.reasoningTokens += row.reasoningTokens
+        addModel(byModel, row)
         continue
       }
       if (row.turn === null || row.step === null) continue
@@ -369,6 +373,7 @@ function viewOf(calls, cutoff) {
       decodeTokens += row.outputTokens
     }
     turns.add(`${row.sessionId}\0${row.turn}`)
+    addModel(byModel, row)
   }
   for (const key of BUCKET_KEYS) totals[key] += compaction[key]
   return {
@@ -387,7 +392,74 @@ function viewOf(calls, cutoff) {
       cacheReadTokens: compaction.cacheReadTokens,
       cacheWriteTokens: compaction.cacheWriteTokens,
     },
+    providers: providersFrom(byModel),
   }
+}
+
+/**
+ * Add one call's billing buckets to its provider and model.
+ * @param byModel - totals keyed by provider and model.
+ * @param row - a chosen call or a compaction.
+ */
+function addModel(byModel, row) {
+  const key = `${row.provider}\0${row.model}`
+  let slot = byModel.get(key)
+  if (slot === undefined) {
+    slot = {
+      provider: row.provider,
+      model: row.model,
+      uncachedInputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 0,
+    }
+    byModel.set(key, slot)
+  }
+  slot.uncachedInputTokens += row.uncachedInputTokens
+  slot.cacheReadTokens += row.cacheReadTokens
+  slot.cacheWriteTokens += row.cacheWriteTokens
+  slot.outputTokens += row.outputTokens
+}
+
+/**
+ * @param row - one model total.
+ * @returns cache read, uncached input, cache write, and output.
+ */
+function modelTotal(row) {
+  return row.uncachedInputTokens + row.cacheReadTokens + row.cacheWriteTokens + row.outputTokens
+}
+
+/**
+ * @param byModel - totals keyed by provider and model.
+ * @returns providers, then models, each from the largest total.
+ */
+function providersFrom(byModel) {
+  /** @type {Map<string, { provider: string, models: Array<{ model: string, uncachedInputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, outputTokens: number }> }>} */
+  const groups = new Map()
+  for (const row of byModel.values()) {
+    let group = groups.get(row.provider)
+    if (group === undefined) {
+      group = { provider: row.provider, models: [] }
+      groups.set(row.provider, group)
+    }
+    group.models.push({
+      model: row.model,
+      uncachedInputTokens: row.uncachedInputTokens,
+      cacheReadTokens: row.cacheReadTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
+      outputTokens: row.outputTokens,
+    })
+  }
+  const providers = [...groups.values()]
+  for (const group of providers) {
+    group.models.sort((a, b) => modelTotal(b) - modelTotal(a) || a.model.localeCompare(b.model))
+  }
+  providers.sort((a, b) => {
+    const at = a.models.reduce((sum, row) => sum + modelTotal(row), 0)
+    const bt = b.models.reduce((sum, row) => sum + modelTotal(row), 0)
+    return bt - at || a.provider.localeCompare(b.provider)
+  })
+  return providers
 }
 
 /**
