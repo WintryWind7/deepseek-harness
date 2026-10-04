@@ -3,11 +3,13 @@
  *
  * Leaves the composer's own statistics pills and context ring alone. Adds one
  * icon after that row; the icon opens a usage page for the current Session.
- * The wide card reads the running total the Host has stored since this plugin
- * started listening. With no stored total yet, every field is zero. Compaction
- * token usage is included in that total and also kept as its own total. This
- * Session's report sits in the narrow card and still comes from its own
- * projections.
+ * The main card shows the detail for the selected total. Summary buttons under
+ * that card stay put, share one size, and each shows a few figures; choosing
+ * one only changes the detail. The page keeps one width and height either way.
+ * With no stored total yet, every field is zero.
+ * Compaction token usage is included in the running total and also kept as its
+ * own total. This Session's report sits in the narrow card and still comes
+ * from its own projections.
  * `sessionStats` supplies turns, steps, and decode speed. `tokenUsage` supplies
  * the billing buckets and cache hit. A subagent is a different Session, so its
  * figures appear on its own screen.
@@ -29,10 +31,14 @@ window.__ModuleLoader__.load({
       session: '这个会话',
       empty: '这个会话还没有用量。',
       ledger: '累计',
+      ledgerNote: '自开始记录以来的全部调用。合计含压缩，轮次、步骤和输出速度不含压缩。',
       turns: '轮次',
       steps: '步骤',
       compaction: '压缩',
-      compactionNote: '只累计压缩。这些用量也已加进上方的累计，轮次、步骤和输出速度不含压缩。',
+      compactionNote: '只累计压缩。这些用量也已加进累计，轮次、步骤和输出速度不含压缩。',
+      views: '用量视图',
+      ledgerBrief: '{turns} 轮 · {steps} 步',
+      countBrief: '{count} 次',
       count: '次数',
       speed: '输出速度',
       speedValue: '{tps} tok/s',
@@ -53,10 +59,14 @@ window.__ModuleLoader__.load({
       session: 'This session',
       empty: 'This session has no usage yet.',
       ledger: 'Running total',
+      ledgerNote: 'Every call since recording started. The total includes compaction; turns, steps, and output speed do not.',
       turns: 'Turns',
       steps: 'Steps',
       compaction: 'Compaction',
-      compactionNote: 'Compaction only. These tokens are also in the running total above. Turns, steps, and output speed do not include compaction.',
+      compactionNote: 'Compaction only. These tokens are also in the running total. Turns, steps, and output speed do not include compaction.',
+      views: 'Usage views',
+      ledgerBrief: '{turns} turns · {steps} steps',
+      countBrief: '{count} times',
       count: 'Count',
       speed: 'Output speed',
       speedValue: '{tps} tok/s',
@@ -92,9 +102,12 @@ window.__ModuleLoader__.load({
         background: var(--dsw-alias-bg-mask-2);
       }
       .um-page {
-        width: min(920px, calc(100% - 48px));
-        min-height: 460px;
+        box-sizing: border-box;
+        display: flex; flex-direction: column;
+        width: min(920px, calc(100vw - 48px));
+        height: min(640px, calc(100vh - 48px));
         padding: 24px 24px 20px;
+        overflow: hidden;
         border: 1px solid var(--dsw-alias-border-l2);
         border-radius: 16px;
         background: var(--dsw-alias-bg-overlay);
@@ -104,15 +117,25 @@ window.__ModuleLoader__.load({
       .um-board {
         display: grid;
         grid-template-columns: minmax(0, 1.7fr) minmax(200px, 0.62fr);
+        flex: 1 1 auto; min-height: 0;
         gap: 16px;
-        align-items: start;
+        align-items: stretch;
         margin-top: 20px;
       }
       .um-card {
-        min-width: 0;
+        display: flex; flex-direction: column;
+        min-width: 0; min-height: 0;
         padding: 8px;
+        overflow: hidden;
         border: 1px solid var(--dsw-alias-border-l1);
         border-radius: 12px;
+      }
+      .um-cardBody {
+        flex: 1 1 auto; min-height: 0;
+        overflow: auto;
+        --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+        --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+        --dsh-scrollbar-track-margin: 8px;
       }
       .um-cardTitle {
         margin: 0;
@@ -161,17 +184,63 @@ window.__ModuleLoader__.load({
       .um-session .um-empty { padding: 16px 10px; font-size: 12px; }
       .um-ledger .um-row { padding: 12px 14px; font-size: 15px; }
       .um-ledger .um-value { font-size: 15px; }
-      .um-compactions { margin-top: 16px; }
-      .um-compactNote {
-        margin: 0; padding: 4px 12px 8px;
+      .um-main {
+        min-width: 0; min-height: 0; height: 100%;
+        display: flex; flex-direction: column; gap: 12px;
+      }
+      .um-ledger { flex: 1 1 auto; }
+      .um-session { height: 100%; }
+      .um-switch {
+        display: grid;
+        flex: none;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(0, 1fr);
+        gap: 8px;
+      }
+      .um-switchButton {
+        display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start;
+        gap: 2px; box-sizing: border-box; width: 100%; min-width: 0; min-height: 78px;
+        margin: 0; padding: 10px 12px;
+        border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px;
+        background: transparent; color: var(--dsw-alias-label-primary);
+        cursor: pointer; text-align: left;
+        transition: background-color 120ms ease, border-color 120ms ease;
+      }
+      .um-switchButton:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .um-switchButton[aria-selected='true'] {
+        border-color: var(--dsw-alias-brand-primary);
+        background: var(--dsw-alias-interactive-bg-hover);
+      }
+      .um-switchButton:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+      .um-switchName {
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary);
+      }
+      .um-switchTotal {
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 15px; font-variant-numeric: tabular-nums;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--dsw-alias-label-primary);
+      }
+      .um-switchMeta {
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 12px; color: var(--dsw-alias-label-tertiary);
+      }
+      .um-viewNote {
+        box-sizing: border-box;
+        height: 66px; margin: 0; padding: 4px 12px 0; overflow: hidden;
         color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.5;
       }
       @media (max-width: 720px) {
-        .um-page { width: calc(100% - 24px); min-height: 0; padding: 16px; }
-        .um-board { grid-template-columns: 1fr; }
+        .um-page { width: calc(100vw - 24px); padding: 16px; }
+        .um-board {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(0, 1.4fr) minmax(0, 0.6fr);
+        }
+        .um-main, .um-session { height: auto; }
       }
       @media (prefers-reduced-motion: reduce) {
-        .um-trigger, .um-iconButton { transition: none; }
+        .um-trigger, .um-iconButton, .um-switchButton { transition: none; }
       }
     `;
 
@@ -390,6 +459,63 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Billed tokens plus output. Missing buckets count as zero.
+     * @param source - a ledger or compaction total, or absent.
+     * @returns the combined token count.
+     */
+    function tokenTotal(source) {
+      const uncached = count(source?.uncachedInputTokens) ?? 0;
+      const read = count(source?.cacheReadTokens) ?? 0;
+      const write = count(source?.cacheWriteTokens) ?? 0;
+      const output = count(source?.outputTokens) ?? 0;
+      return uncached + read + write + output;
+    }
+
+    /**
+     * Summary buttons for the main card. Each button keeps the same size and
+     * stays in place; selecting one only changes which detail the card shows.
+     * @param record - the stored view, or null before the first successful read.
+     * @param t - the `usage-meter` dictionary.
+     * @param view - `ledger` or `compaction`.
+     * @param onSelect - chooses the detail.
+     * @returns the button row.
+     */
+    function viewSwitch(record, t, view, onSelect) {
+      const turns = count(record?.turns) ?? 0;
+      const steps = count(record?.steps) ?? 0;
+      const compaction = record?.compaction;
+      const items = [
+        {
+          id: 'ledger',
+          name: t('ledger'),
+          total: t('totalValue', { count: formatExact(tokenTotal(record)) }),
+          meta: t('ledgerBrief', { turns: formatExact(turns), steps: formatExact(steps) }),
+        },
+        {
+          id: 'compaction',
+          name: t('compaction'),
+          total: t('totalValue', { count: formatExact(tokenTotal(compaction)) }),
+          meta: t('countBrief', { count: formatExact(count(compaction?.count) ?? 0) }),
+        },
+      ];
+      return h('div', {
+        className: 'um-switch',
+        role: 'tablist',
+        'aria-label': t('views'),
+      }, items.map(item => h('button', {
+        key: item.id,
+        type: 'button',
+        className: 'um-switchButton',
+        role: 'tab',
+        'aria-selected': view === item.id,
+        onClick: () => { onSelect(item.id); },
+      },
+      h('span', { className: 'um-switchName' }, item.name),
+      h('span', { className: 'um-switchTotal' }, item.total),
+      h('span', { className: 'um-switchMeta' }, item.meta))));
+    }
+
+    /**
      * One labeled report card. The body is the row list, or the empty line.
      * @param props.title - card heading.
      * @param props.part - `data-dsh-part` value.
@@ -403,7 +529,7 @@ window.__ModuleLoader__.load({
         'data-dsh-part': props.part,
       },
       h('h4', { className: 'um-cardTitle' }, props.title),
-      props.children);
+      h('div', { className: 'um-cardBody' }, props.children));
     }
 
     /**
@@ -416,7 +542,12 @@ window.__ModuleLoader__.load({
       const project = props.useProjection;
       const t = props.t;
       const [open, setOpen] = useState(false);
+      const [view, setView] = useState('ledger');
       const [ledger, setLedger] = useState(null);
+      const dismiss = () => {
+        setOpen(false);
+        setView('ledger');
+      };
       const triggerRef = useRef(null);
       const closeRef = useRef(null);
       const stats = typeof project === 'function' ? project('sessionStats') : undefined;
@@ -447,7 +578,7 @@ window.__ModuleLoader__.load({
         const previous = document.activeElement;
         closeRef.current?.focus();
         const onKey = (event) => {
-          if (event.key === 'Escape') setOpen(false);
+          if (event.key === 'Escape') dismiss();
         };
         document.addEventListener('keydown', onKey);
         return () => {
@@ -462,7 +593,7 @@ window.__ModuleLoader__.load({
         ? createPortal(h('div', {
           className: 'um-backdrop',
           onMouseDown: (event) => {
-            if (event.target === event.currentTarget) setOpen(false);
+            if (event.target === event.currentTarget) dismiss();
           },
         },
         h('div', {
@@ -483,28 +614,25 @@ window.__ModuleLoader__.load({
             className: 'um-iconButton',
             'aria-label': t('close'),
             title: t('close'),
-            onClick: () => { setOpen(false); },
+            onClick: () => { dismiss(); },
           }, h(CloseIcon))),
         h('div', { className: 'um-board' },
-          h(ReportCard, {
-            title: t('ledger'),
-            part: 'ledger',
-            className: 'um-card um-ledger',
-          }, rowList(ledgerRows(ledger, t))),
+          h('div', { className: 'um-main' },
+            h(ReportCard, {
+              title: view === 'compaction' ? t('compaction') : t('ledger'),
+              part: view === 'compaction' ? 'compactions' : 'ledger',
+              className: 'um-card um-ledger',
+            }, h('div', null,
+              h('p', { className: 'um-viewNote' }, t(view === 'compaction' ? 'compactionNote' : 'ledgerNote')),
+              rowList(view === 'compaction' ? compactionRows(ledger, t) : ledgerRows(ledger, t)))),
+            viewSwitch(ledger, t, view, setView)),
           h(ReportCard, {
             title: t('session'),
             part: 'session-card',
             className: 'um-card um-session',
           }, rows.length === 0
             ? h('p', { className: 'um-empty' }, t('empty'))
-            : rowList(rows))),
-        h(ReportCard, {
-          title: t('compaction'),
-          part: 'compactions',
-          className: 'um-card um-compactions',
-        }, h('div', null,
-          h('p', { className: 'um-compactNote' }, t('compactionNote')),
-          rowList(compactionRows(ledger, t)))))),
+            : rowList(rows))))),
         document.body)
         : null;
 
