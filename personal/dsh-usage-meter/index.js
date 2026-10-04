@@ -6,7 +6,11 @@
  * so usage from before this plugin was running is not added. Each settled
  * model call is one JSON file under the personal data directory:
  * `<dsh-home>/personal/dsh-usage-meter/calls/<sessionId>/<seq>.json`.
- * The page's totals are summed from those files when it asks. A later
+ * Each file's `time` is the event time in Unix milliseconds, which is what
+ * date windows filter on. `processStartedAt` is when this process began, and
+ * the same instant is stored in `<plugin>/process.json`. The page's totals
+ * are summed from those files when it asks, once for this process and again
+ * for the rolling windows. A later
  * message for the same session, turn, and step stands in for an earlier
  * attempt in that sum; both files stay. Nothing here is written back into
  * a Session log, and nothing is written into the harness `storages` directory.
@@ -26,6 +30,8 @@ const PERSONAL_DIR = 'personal'
 const PLUGIN_DIR = 'dsh-usage-meter'
 /** Call files live in `<plugin>/calls/<sessionId>/<seq>.json`. */
 const CALLS_DIR = 'calls'
+/** This process's start time, beside the call files. */
+const PROCESS_FILE = 'process.json'
 /** Session ids and file names that are safe as a single path segment. */
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/
 
@@ -35,12 +41,12 @@ const LEDGER_PATH = '/api/usage.meter'
 const BUCKET_KEYS = ['uncachedInputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']
 
 /**
- * @returns the absolute `calls` directory for this plugin.
+ * @returns the absolute personal directory for this plugin.
  */
-function callsDirectory() {
+function pluginDirectory() {
   const fromEnv = process.env.DSH_HOME
   const home = typeof fromEnv === 'string' && fromEnv.trim() !== '' ? resolve(fromEnv) : join(homedir(), '.dsh')
-  return join(home, PERSONAL_DIR, PLUGIN_DIR, CALLS_DIR)
+  return join(home, PERSONAL_DIR, PLUGIN_DIR)
 }
 
 /**
@@ -78,6 +84,7 @@ function parseCall(value) {
   const step = value.step === null ? null : requireWhole(value.step, 'step')
   return {
     time: requireWhole(value.time, 'time'),
+    processStartedAt: value.processStartedAt == null ? null : requireWhole(value.processStartedAt, 'processStartedAt'),
     sessionId: requireText(value.sessionId, 'sessionId'),
     seq: requireWhole(value.seq, 'seq'),
     kind: value.kind,
@@ -232,9 +239,10 @@ function routeOf(message) {
 /**
  * @param sessionId - the session that appended the event.
  * @param event - the appended event.
+ * @param processStartedAt - when this process began, in Unix milliseconds.
  * @returns the record and its file key, or null when the event is not a call.
  */
-function callFrom(sessionId, event) {
+function callFrom(sessionId, event, processStartedAt) {
   const data = event.data
   if (data === null || typeof data !== 'object') return null
   const seq = whole(event.seq)
@@ -247,6 +255,7 @@ function callFrom(sessionId, event) {
       key,
       value: {
         time,
+        processStartedAt,
         sessionId,
         seq,
         kind: 'compaction',
@@ -269,6 +278,7 @@ function callFrom(sessionId, event) {
     key,
     value: {
       time,
+      processStartedAt,
       sessionId,
       seq,
       kind: event.type === 'assistant/message' ? 'message' : 'attempt',
@@ -297,15 +307,17 @@ function prefer(row, previous) {
 
 /**
  * @param calls - the call table, or undefined before it is open.
+ * @param cutoff - include a call when its `time` is at least this Unix millisecond, or every call when null.
  * @returns the summed fields the page shows.
  */
-function viewOf(calls) {
+function viewOf(calls, cutoff) {
   /** @type {Map<string, ReturnType<typeof parseCall>>} */
   const chosen = new Map()
   const compaction = emptyBuckets()
   let compactionCount = 0
   if (calls !== undefined) {
     for (const [, row] of calls.entries()) {
+      if (cutoff !== null && row.time < cutoff) continue
       if (row.kind === 'compaction') {
         compactionCount += 1
         for (const key of BUCKET_KEYS) compaction[key] += row[key]
@@ -417,12 +429,46 @@ async function writeCallFile(root, row) {
 }
 
 /**
+ * Record when this process began.
+ * @param directory - the plugin's personal directory.
+ * @param startedAt - Unix milliseconds.
+ */
+async function writeProcessFile(directory, startedAt) {
+  await mkdir(directory, { recursive: true })
+  const temporary = join(directory, `process.${process.pid}.tmp`)
+  await writeFile(temporary, `${JSON.stringify({ startedAt, pid: process.pid }, null, 2)}\n`, 'utf8')
+  await rename(temporary, join(directory, PROCESS_FILE))
+}
+
+/**
+ * @param calls - the call table.
+ * @param startedAt - when this process began, in Unix milliseconds.
+ * @param now - the clock used for the rolling windows.
+ * @returns one summed view per range.
+ */
+function rangesOf(calls, startedAt, now) {
+  const hour = 60 * 60 * 1000
+  return {
+    boot: viewOf(calls, startedAt),
+    h24: viewOf(calls, now - 24 * hour),
+    d7: viewOf(calls, now - 7 * 24 * hour),
+    d30: viewOf(calls, now - 30 * 24 * hour),
+    all: viewOf(calls, null),
+  }
+}
+
+/**
  * Mount the call recorder and its read route.
  * @param ctx - host context carrying the authenticated fetch registry.
  */
 export function apply(ctx) {
   ctx.effect(() => {
-    const root = callsDirectory()
+    const startedAt = Date.now()
+    const directory = pluginDirectory()
+    const root = join(directory, CALLS_DIR)
+    void writeProcessFile(directory, startedAt).catch(error => {
+      ctx.logger?.error?.(`usage-meter: process start write failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
     let ready = false
     /** @type {Map<string, ReturnType<typeof parseCall>>} */
     let calls = new Map()
@@ -434,7 +480,7 @@ export function apply(ctx) {
      * @param event - the appended event.
      */
     function writeCall(sessionId, event) {
-      const row = callFrom(sessionId, event)
+      const row = callFrom(sessionId, event, startedAt)
       if (row === null || !SAFE_SEGMENT.test(sessionId)) return
       calls.set(row.key, row.value)
       void writeCallFile(root, row).catch(error => {
@@ -457,7 +503,14 @@ export function apply(ctx) {
       path: LEDGER_PATH,
       methods: ['GET'],
       requestBody: 'buffered',
-      fetch: () => Promise.resolve(json(viewOf(calls))),
+      fetch: () => {
+        const now = Date.now()
+        return Promise.resolve(json({
+          startedAt,
+          now,
+          ranges: rangesOf(calls, startedAt, now),
+        }))
+      },
     })
 
     let disposed = false

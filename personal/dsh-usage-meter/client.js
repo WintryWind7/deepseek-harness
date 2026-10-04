@@ -5,7 +5,9 @@
  * icon after that row; the icon opens a usage page for the current Session.
  * The main card shows the detail for the selected total. Summary buttons under
  * that card stay put, share one size, and each shows a few figures; choosing
- * one only changes the detail. The page keeps one width and height either way.
+ * one only changes the detail. The running total keeps one date control in
+ * its note area; opening it lists the ranges over the rows. This process is
+ * the default. The page keeps one width and height either way.
  * With no stored total yet, every field is zero.
  * Compaction token usage is included in the running total and also kept as its
  * own total. This Session's report sits in the narrow card and still comes
@@ -31,13 +33,25 @@ window.__ModuleLoader__.load({
       session: '这个会话',
       empty: '这个会话还没有用量。',
       ledger: '累计',
-      ledgerNote: '自开始记录以来的全部调用。合计含压缩，轮次、步骤和输出速度不含压缩。',
+      ledgerNote: '{scope}。合计含压缩，轮次、步骤和输出速度不含压缩。',
+      scopeBoot: '这次启动之后的调用',
+      scopeH24: '最近24小时内的调用',
+      scopeD7: '最近7天内的调用',
+      scopeD30: '最近30天内的调用',
+      scopeAll: '自开始记录以来的全部调用',
+      boot: '本次启动',
+      h24: '24小时',
+      d7: '7天',
+      d30: '30天',
+      all: '全部',
+      ranges: '时间范围',
       turns: '轮次',
       steps: '步骤',
       compaction: '压缩',
-      compactionNote: '只累计压缩。这些用量也已加进累计，轮次、步骤和输出速度不含压缩。',
+      compactionNote: '全部压缩，不随累计的时间范围变化。轮次、步骤和输出速度不含压缩。',
       views: '用量视图',
       ledgerBrief: '{turns} 轮 · {steps} 步',
+      ledgerRangeBrief: '{range} · {turns} 轮 · {steps} 步',
       countBrief: '{count} 次',
       count: '次数',
       speed: '输出速度',
@@ -59,13 +73,25 @@ window.__ModuleLoader__.load({
       session: 'This session',
       empty: 'This session has no usage yet.',
       ledger: 'Running total',
-      ledgerNote: 'Every call since recording started. The total includes compaction; turns, steps, and output speed do not.',
+      ledgerNote: '{scope}. The total includes compaction; turns, steps, and output speed do not.',
+      scopeBoot: 'Calls since this start',
+      scopeH24: 'Calls in the last 24 hours',
+      scopeD7: 'Calls in the last 7 days',
+      scopeD30: 'Calls in the last 30 days',
+      scopeAll: 'Every call since recording started',
+      boot: 'This start',
+      h24: '24 hours',
+      d7: '7 days',
+      d30: '30 days',
+      all: 'All',
+      ranges: 'Time range',
       turns: 'Turns',
       steps: 'Steps',
       compaction: 'Compaction',
-      compactionNote: 'Compaction only. These tokens are also in the running total. Turns, steps, and output speed do not include compaction.',
+      compactionNote: 'All compaction, not the time range chosen on the running total. Turns, steps, and output speed do not include compaction.',
       views: 'Usage views',
       ledgerBrief: '{turns} turns · {steps} steps',
+      ledgerRangeBrief: '{range} · {turns} turns · {steps} steps',
       countBrief: '{count} times',
       count: 'Count',
       speed: 'Output speed',
@@ -226,10 +252,78 @@ window.__ModuleLoader__.load({
         max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         font-size: 12px; color: var(--dsw-alias-label-tertiary);
       }
+      .um-viewHead {
+        position: relative; box-sizing: border-box;
+        height: 84px; margin: 0; padding: 0 12px;
+      }
+      .um-filter {
+        display: flex; align-items: center; gap: 8px;
+        box-sizing: border-box; width: 100%; height: 36px; margin: 0; padding: 0 10px;
+        border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+        background: transparent; color: var(--dsw-alias-label-primary);
+        cursor: pointer; text-align: left;
+        transition: background-color 120ms ease, border-color 120ms ease;
+      }
+      .um-filter:hover,
+      .um-filter[aria-expanded='true'] {
+        border-color: var(--dsw-alias-brand-primary);
+        background: var(--dsw-alias-interactive-bg-hover);
+      }
+      .um-filter:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+      .um-filterName {
+        min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary);
+      }
+      .um-filterValue {
+        margin-left: auto; flex: none;
+        font-variant-numeric: tabular-nums;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px; color: var(--dsw-alias-label-primary);
+      }
+      .um-filterMark {
+        flex: none; width: 0; height: 0;
+        border-left: 4px solid transparent; border-right: 4px solid transparent;
+        border-top: 5px solid currentColor; color: var(--dsw-alias-label-tertiary);
+      }
+      .um-filterMenu {
+        position: absolute; z-index: 3; left: 12px; right: 12px; top: 40px;
+        display: flex; flex-direction: column; gap: 4px;
+        padding: 6px;
+        border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
+        background: var(--dsw-alias-bg-overlay);
+        box-shadow: 0 8px 24px var(--dsw-alias-bg-mask-2);
+      }
+      .um-filterOption {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; width: 100%; min-width: 0; margin: 0; padding: 8px 10px;
+        border: 1px solid transparent; border-radius: 8px;
+        background: transparent; color: var(--dsw-alias-label-primary);
+        cursor: pointer; text-align: left; font-size: 13px;
+      }
+      .um-filterOption:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .um-filterOption[aria-checked='true'] {
+        border-color: var(--dsw-alias-brand-primary);
+        background: var(--dsw-alias-interactive-bg-hover);
+      }
+      .um-filterOption:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+      .um-filterOptionName {
+        min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        color: var(--dsw-alias-label-secondary);
+      }
+      .um-filterOptionValue {
+        flex: none;
+        font-variant-numeric: tabular-nums;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px; color: var(--dsw-alias-label-primary);
+      }
       .um-viewNote {
-        box-sizing: border-box;
-        height: 66px; margin: 0; padding: 4px 12px 0; overflow: hidden;
+        margin: 6px 0 0; overflow: hidden;
         color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.5;
+        white-space: nowrap; text-overflow: ellipsis;
+      }
+      .um-viewNoteAlone {
+        height: 84px; margin: 0 -12px; padding: 4px 12px 0;
+        white-space: normal;
       }
       @media (max-width: 720px) {
         .um-page { width: calc(100vw - 24px); padding: 16px; }
@@ -240,7 +334,7 @@ window.__ModuleLoader__.load({
         .um-main, .um-session { height: auto; }
       }
       @media (prefers-reduced-motion: reduce) {
-        .um-trigger, .um-iconButton, .um-switchButton { transition: none; }
+        .um-trigger, .um-iconButton, .um-switchButton, .um-filter { transition: none; }
       }
     `;
 
@@ -471,48 +565,121 @@ window.__ModuleLoader__.load({
       return uncached + read + write + output;
     }
 
+    /** Date ranges shown inside the time button, with this process first. */
+    const RANGE_IDS = ['boot', 'h24', 'd7', 'd30', 'all'];
+
+    /** Locale key for the sentence that names one date range. */
+    const RANGE_SCOPE = {
+      boot: 'scopeBoot',
+      h24: 'scopeH24',
+      d7: 'scopeD7',
+      d30: 'scopeD30',
+      all: 'scopeAll',
+    };
+
+    /**
+     * One window from the host payload. A host that still returns a single sum
+     * is used for every window until it is restarted.
+     * @param payload - the route body, or null.
+     * @param rangeId - `boot`, `h24`, `d7`, `d30`, or `all`.
+     * @returns that window, or null.
+     */
+    function rangeView(payload, rangeId) {
+      const ranges = payload?.ranges;
+      if (ranges !== null && typeof ranges === 'object' && Object.prototype.hasOwnProperty.call(ranges, rangeId)) {
+        return ranges[rangeId];
+      }
+      if (payload !== null && payload !== undefined && payload.ranges === undefined && typeof payload.turns === 'number') {
+        return payload;
+      }
+      return null;
+    }
+
+    /**
+     * One date control for the running total. It stays a single row; opening
+     * it lists every range over the rows beneath.
+     * @param payload - the route body.
+     * @param t - the `usage-meter` dictionary.
+     * @param range - the selected date range.
+     * @param menuOpen - whether the list is open.
+     * @param onRange - chooses the date range.
+     * @param onMenu - opens or closes the list.
+     * @returns the control and its list.
+     */
+    function rangeControl(payload, t, range, menuOpen, onRange, onMenu) {
+      const record = rangeView(payload, range);
+      return h('div', { className: 'um-filterWrap' },
+        h('button', {
+          type: 'button',
+          className: 'um-filter',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': menuOpen,
+          'aria-label': t('ranges'),
+          onClick: () => { onMenu(!menuOpen); },
+        },
+        h('span', { className: 'um-filterName' }, t(range)),
+        h('span', { className: 'um-filterValue' }, t('totalValue', { count: formatExact(tokenTotal(record)) })),
+        h('span', { className: 'um-filterMark', 'aria-hidden': true })),
+        menuOpen ? h('div', {
+          className: 'um-filterMenu',
+          role: 'listbox',
+          'aria-label': t('ranges'),
+        }, RANGE_IDS.map(id => h('button', {
+          key: id,
+          type: 'button',
+          className: 'um-filterOption',
+          role: 'option',
+          'aria-selected': range === id,
+          onClick: () => { onRange(id); onMenu(false); },
+        },
+        h('span', { className: 'um-filterOptionName' }, t(id)),
+        h('span', { className: 'um-filterOptionValue' }, t('totalValue', { count: formatExact(tokenTotal(rangeView(payload, id))) }))))) : null);
+    }
+
     /**
      * Summary buttons for the main card. Each button keeps the same size and
      * stays in place; selecting one only changes which detail the card shows.
-     * @param record - the stored view, or null before the first successful read.
+     * @param record - the running total for the selected date range.
+     * @param overall - every stored call, used by the compaction button.
      * @param t - the `usage-meter` dictionary.
      * @param view - `ledger` or `compaction`.
+     * @param range - the selected date range.
      * @param onSelect - chooses the detail.
      * @returns the button row.
      */
-    function viewSwitch(record, t, view, onSelect) {
+    function viewSwitch(record, overall, t, view, range, onSelect) {
       const turns = count(record?.turns) ?? 0;
       const steps = count(record?.steps) ?? 0;
-      const compaction = record?.compaction;
-      const items = [
-        {
-          id: 'ledger',
-          name: t('ledger'),
-          total: t('totalValue', { count: formatExact(tokenTotal(record)) }),
-          meta: t('ledgerBrief', { turns: formatExact(turns), steps: formatExact(steps) }),
-        },
-        {
-          id: 'compaction',
-          name: t('compaction'),
-          total: t('totalValue', { count: formatExact(tokenTotal(compaction)) }),
-          meta: t('countBrief', { count: formatExact(count(compaction?.count) ?? 0) }),
-        },
-      ];
+      const compaction = overall?.compaction;
       return h('div', {
         className: 'um-switch',
         role: 'tablist',
         'aria-label': t('views'),
-      }, items.map(item => h('button', {
-        key: item.id,
+      },
+      h('button', {
         type: 'button',
         className: 'um-switchButton',
         role: 'tab',
-        'aria-selected': view === item.id,
-        onClick: () => { onSelect(item.id); },
+        'aria-selected': view === 'ledger',
+        onClick: () => { onSelect('ledger'); },
       },
-      h('span', { className: 'um-switchName' }, item.name),
-      h('span', { className: 'um-switchTotal' }, item.total),
-      h('span', { className: 'um-switchMeta' }, item.meta))));
+      h('span', { className: 'um-switchName' }, t('ledger')),
+      h('span', { className: 'um-switchTotal' }, t('totalValue', { count: formatExact(tokenTotal(record)) })),
+      h('span', { className: 'um-switchMeta' }, t('ledgerRangeBrief', {
+        range: t(range),
+        turns: formatExact(turns),
+        steps: formatExact(steps),
+      }))),
+      h('button', {
+        type: 'button',
+        className: 'um-switchButton',
+        role: 'tab',
+        'aria-selected': view === 'compaction',
+        onClick: () => { onSelect('compaction'); },
+      },
+      h('span', { className: 'um-switchName' }, t('compaction')),
+      h('span', { className: 'um-switchTotal' }, t('totalValue', { count: formatExact(tokenTotal(compaction)) })),
+      h('span', { className: 'um-switchMeta' }, t('countBrief', { count: formatExact(count(compaction?.count) ?? 0) }))));
     }
 
     /**
@@ -543,10 +710,16 @@ window.__ModuleLoader__.load({
       const t = props.t;
       const [open, setOpen] = useState(false);
       const [view, setView] = useState('ledger');
+      const [range, setRange] = useState('boot');
+      const [menuOpen, setMenuOpen] = useState(false);
       const [ledger, setLedger] = useState(null);
+      const menuOpenRef = useRef(false);
+      menuOpenRef.current = menuOpen;
       const dismiss = () => {
         setOpen(false);
         setView('ledger');
+        setRange('boot');
+        setMenuOpen(false);
       };
       const triggerRef = useRef(null);
       const closeRef = useRef(null);
@@ -578,16 +751,31 @@ window.__ModuleLoader__.load({
         const previous = document.activeElement;
         closeRef.current?.focus();
         const onKey = (event) => {
-          if (event.key === 'Escape') dismiss();
+          if (event.key !== 'Escape') return;
+          if (menuOpenRef.current) {
+            setMenuOpen(false);
+            return;
+          }
+          dismiss();
+        };
+        const onPointer = (event) => {
+          if (!menuOpenRef.current) return;
+          const target = event.target;
+          if (target instanceof Element && target.closest('.um-filterWrap') !== null) return;
+          setMenuOpen(false);
         };
         document.addEventListener('keydown', onKey);
+        document.addEventListener('pointerdown', onPointer);
         return () => {
           document.removeEventListener('keydown', onKey);
+          document.removeEventListener('pointerdown', onPointer);
           if (previous instanceof HTMLElement) previous.focus();
         };
       }, [open]);
 
       if (typeof t !== 'function') return null;
+      const selected = rangeView(ledger, range);
+      const overall = rangeView(ledger, 'all');
 
       const dialog = open
         ? createPortal(h('div', {
@@ -622,10 +810,20 @@ window.__ModuleLoader__.load({
               title: view === 'compaction' ? t('compaction') : t('ledger'),
               part: view === 'compaction' ? 'compactions' : 'ledger',
               className: 'um-card um-ledger',
-            }, h('div', null,
-              h('p', { className: 'um-viewNote' }, t(view === 'compaction' ? 'compactionNote' : 'ledgerNote')),
-              rowList(view === 'compaction' ? compactionRows(ledger, t) : ledgerRows(ledger, t)))),
-            viewSwitch(ledger, t, view, setView)),
+            }, view === 'compaction'
+              ? h('div', null,
+                h('div', { className: 'um-viewHead' },
+                  h('p', { className: 'um-viewNote um-viewNoteAlone' }, t('compactionNote'))),
+                rowList(compactionRows(overall, t)))
+              : h('div', null,
+                h('div', { className: 'um-viewHead' },
+                  rangeControl(ledger, t, range, menuOpen, setRange, setMenuOpen),
+                  h('p', { className: 'um-viewNote' }, t('ledgerNote', { scope: t(RANGE_SCOPE[range] ?? 'scopeBoot') }))),
+                rowList(ledgerRows(selected, t)))),
+            viewSwitch(selected, overall, t, view, range, (id) => {
+              setView(id);
+              if (id !== 'ledger') setMenuOpen(false);
+            })),
           h(ReportCard, {
             title: t('session'),
             part: 'session-card',
