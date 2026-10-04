@@ -1,11 +1,12 @@
 # @wintry/git-panel
 
 A Web GUI plugin for DeepSeek Harness: a compact control in the composer tool row that opens a panel showing the
-current Session working directory's Git branch, its upstream tracking state, the files that are not committed, and the
-commit history.
+current Session working directory's Git branch, its upstream tracking state, the files that are not committed, the
+commit history, and the remotes.
 
-It is read-only. It never writes to a Session log, a Git repository, or the model-visible surface; reading the panel
-creates no conversation message and no trajectory entry.
+Reading the panel writes nothing. The remote form and the push button do write to that repository, and only to that
+repository: the working directory comes from the Session header. Neither path writes a Session log or a model-visible
+message.
 
 ## Use it
 
@@ -20,15 +21,32 @@ The panel reports:
 - each uncommitted file with its two-character porcelain status, its path, and its bucket (staged, unstaged,
   untracked, or conflicted). A rename shows its original path;
 - the commit history newest first, with a single-character lane gutter, the abbreviated id, the subject, the refs
-  that point at the commit, the author, and a relative time.
+  that point at the commit, the author, and a relative time. Opening a row shows that commit in full: the complete
+  subject and body, the absolute time, the author, the committer when that is someone else, the parents, and the
+  files changed against the first parent with their line counts. It does not show the patch.
 
 A directory that is not a Git repository produces an empty state, not a failure.
 
+### Remotes and the shortcut push
+
+Each remote is listed with the URL `git push` would use. The row can change that URL (fetch and push are both set to
+the value you save), remove the remote, or add one. A checkbox chooses which remotes the shortcut includes. Until you
+change a checkbox, a remote is included only when this repository already has its remote-tracking ref for the current
+branch, so a remote that has never contained this branch stays out.
+
+The push button updates those remotes or updates none of them. It fetches each selected remote's copy of the current
+branch and continues only when every copy is already an ancestor of `HEAD`. A missing branch, a remote that cannot be
+read, or a history that is not a fast-forward cancels the whole push; the button never creates a branch and never
+passes `--force`. The push that follows also has no force flag, so a remote that moves after the check is still
+rejected. Remotes that already have this commit are left alone. The choice of remotes is stored in local git config
+(`wintry.gitpanel.pushConfigured` and `wintry.gitpanel.push`) and is not committed.
+
 ## How it is wired
 
-The Host half registers one authenticated `GET /api/git.panel?sessionId=<id>&limit=<n>` route through
-`ctx.connection.fetch`. It resolves the working directory from the Session header, never from the request, so the
-browser cannot ask Git about an arbitrary directory. It runs two commands:
+The Host half registers one authenticated `/api/git.panel` route through `ctx.connection.fetch`. GET reads the panel.
+POST adds, edits, or removes a remote, saves the shortcut selection, or runs the fast-forward push. The working
+directory comes from the Session header, never from the request, so the browser cannot aim Git at an arbitrary
+directory. Arguments are fixed argv; no shell parses a path, a remote name, or a URL. A read runs two commands:
 
 ```text
 git status --porcelain=v1 -b -z --untracked-files=all
@@ -91,8 +109,8 @@ was adapted and how it differs.
 
 | File | Role |
 |---|---|
-| `index.js` | Host plugin: the route, the two subprocess calls, and the response envelope |
-| `parse.js` | Pure porcelain and log parsers, kept separate so they can be tested against captured Git output |
+| `index.js` | Host plugin: the route, the git commands, and the response envelope |
+| `parse.js` | Pure parsers and the fast-forward decision, kept separate so they can be tested against captured Git output |
 | `lanes.js` | Pure commit-graph lane layout |
 | `client.js` | Browser half: the composer control and the panel |
 | `cordis.patch.yml` | Bundle patch inserting the Host row |
@@ -112,7 +130,7 @@ that predates a field yields the empty default for it rather than an exception.
 
 ## Known limitations
 
-- Read-only. It does not stage, commit, switch branches, or create worktrees.
-- Selecting a commit does not yet expand its details, and clicking a file does not show its diff.
+- It does not stage, commit, switch branches, pull, force-push, or create a branch on a remote.
+- Opening a commit does not show its patch, and clicking a file does not show that file's diff.
 - The panel reads Git state when opened, when refreshed, and when the history is extended. It does not watch the
   repository, so an external change appears only after one of those.

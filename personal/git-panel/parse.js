@@ -156,3 +156,274 @@ export function parseLog(text) {
   }
   return commits
 }
+
+/**
+ * A remote or branch name that can be placed in fixed git argv.
+ *
+ * Rejects option-looking names and ref metacharacters. Slashes stay allowed so
+ * an existing remote or a `feature/topic` branch still round-trips.
+ * @param name - the candidate.
+ * @returns whether git can be given this name as one argument.
+ */
+export function remoteArgOk(name) {
+  return typeof name === 'string'
+    && name.length > 0
+    && name.length <= 200
+    && name !== 'HEAD'
+    && !name.startsWith('-')
+    && !name.startsWith('/')
+    && !name.endsWith('/')
+    && !name.endsWith('.lock')
+    && !name.endsWith('.')
+    && !name.includes('..')
+    && !name.includes('//')
+    && !name.includes('@{')
+    && !/[\u0000-\u001f\u007f\s~^:?*[\\]/.test(name)
+}
+
+/**
+ * A remote name the panel itself may create.
+ * @param name - the candidate.
+ * @returns whether the add form may submit it.
+ */
+export function remoteNameOk(name) {
+  return remoteArgOk(name) && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
+}
+
+/**
+ * A branch name the panel may use in a refspec.
+ * @param name - the candidate.
+ * @returns whether a `refs/heads/<name>` refspec is safe to build.
+ */
+export function branchNameOk(name) {
+  return remoteArgOk(name)
+}
+
+/**
+ * Normalize a remote URL typed into the panel.
+ *
+ * `ext::` is rejected because git treats it as a command. Leading dashes are
+ * rejected so the value cannot become an option.
+ * @param url - the raw field value.
+ * @returns the trimmed URL, or null when the panel must not store it.
+ */
+export function remoteUrlOk(url) {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (trimmed.length < 1 || trimmed.length > 2000) return null
+  if (trimmed.startsWith('-') || trimmed.toLowerCase().startsWith('ext::')) return null
+  if (/[\u0000-\u001f\u007f\s]/.test(trimmed)) return null
+  return trimmed
+}
+
+/**
+ * Whether a URL already stored by git must not be pushed to from this panel.
+ * @param url - the fetch or push URL from `git remote -v`.
+ * @returns true when pushing this remote could execute a command.
+ */
+export function remoteUrlUnsafe(url) {
+  if (typeof url !== 'string' || url === '') return true
+  return url.startsWith('-') || url.toLowerCase().startsWith('ext::') || /[\u0000-\u001f\u007f]/.test(url)
+}
+
+/**
+ * Parse `git remote -v`.
+ *
+ * Each line is `<name>\t<url> (fetch|push)`. A name that cannot safely be
+ * passed back to git is dropped.
+ * @param text - the raw stdout.
+ * @returns one entry per remote, in the order git listed them.
+ */
+export function parseRemotes(text) {
+  /** @type {Map<string, {name: string, fetchUrl: string|null, pushUrl: string|null}>} */
+  const byName = new Map()
+  for (const raw of String(text).split('\n')) {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+    const tab = line.indexOf('\t')
+    if (tab <= 0) continue
+    const name = line.slice(0, tab)
+    const rest = line.slice(tab + 1)
+    const fetchMark = ' (fetch)'
+    const pushMark = ' (push)'
+    let kind = ''
+    let url = ''
+    if (rest.endsWith(fetchMark)) {
+      kind = 'fetch'
+      url = rest.slice(0, -fetchMark.length)
+    } else if (rest.endsWith(pushMark)) {
+      kind = 'push'
+      url = rest.slice(0, -pushMark.length)
+    }
+    if (kind === '' || url === '' || !remoteArgOk(name)) continue
+    const row = byName.get(name) ?? { name, fetchUrl: null, pushUrl: null }
+    if (kind === 'fetch') row.fetchUrl = url
+    else row.pushUrl = url
+    byName.set(name, row)
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Decide a one-click push that updates every selected remote or updates none.
+ *
+ * `same` needs no write. `ff` may be pushed. `diverged` and `absent` are not
+ * fast-forwards, and `unreachable` was not proved safe, so each of those
+ * refuses the whole push. This panel does not create a missing remote branch.
+ * @param checks - one classification per selected remote.
+ * @returns the push plan, or the remotes that blocked it.
+ */
+export function planPush(checks) {
+  const names = kind => checks.filter(item => item.kind === kind).map(item => item.name)
+  const diverged = names('diverged')
+  const missing = names('absent')
+  const known = new Set(['same', 'ff', 'diverged', 'absent', 'unreachable'])
+  const unreachable = names('unreachable').concat(
+    checks.filter(item => !known.has(item.kind)).map(item => item.name),
+  )
+  if (diverged.length > 0 || missing.length > 0 || unreachable.length > 0) {
+    return { ok: false, diverged, missing, unreachable }
+  }
+  return { ok: true, updates: names('ff'), current: names('same') }
+}
+
+/** Full Git object id, SHA-1 or SHA-256. */
+const COMMIT_OID = /^[0-9a-f]{40,64}$/i
+
+/**
+ * Whether a request may name this commit.
+ * @param value - the raw query value.
+ * @returns whether it is a full object id and nothing else.
+ */
+export function commitOidOk(value) {
+  return typeof value === 'string' && COMMIT_OID.test(value)
+}
+
+/**
+ * Parse `git show -s` for one commit.
+ *
+ * Fields are separated by NUL: id, parents, author name, author email, author
+ * time, committer name, committer email, committer time, subject, body.
+ * @param text - the raw stdout.
+ * @returns the commit message fields, or null when the record is incomplete.
+ */
+export function parseCommitShow(text) {
+  const fields = String(text).replace(/\n$/, '').split('\0')
+  if (fields.length < 10) return null
+  const oid = fields[0]
+  const parents = fields[1]
+  const author = fields[2]
+  const authorEmail = fields[3]
+  const authorTime = fields[4]
+  const committer = fields[5]
+  const committerEmail = fields[6]
+  const committerTime = fields[7]
+  const subject = fields[8]
+  if (!commitOidOk(oid) || author === undefined || authorEmail === undefined
+    || authorTime === undefined || committer === undefined || committerEmail === undefined
+    || committerTime === undefined || subject === undefined) return null
+  return {
+    oid,
+    parents: parents === '' ? [] : parents.split(' ').filter(commitOidOk),
+    author,
+    authorEmail,
+    authorTime: Number(authorTime),
+    committer,
+    committerEmail,
+    committerTime: Number(committerTime),
+    subject,
+    body: fields.slice(9).join('\0').replace(/\n+$/, ''),
+  }
+}
+
+/**
+ * Parse `git diff-tree --name-status -z`.
+ *
+ * A rename or copy is followed by the old path and then the new path. Every
+ * other status is followed by one path.
+ * @param text - the raw stdout, without a leading commit id.
+ * @returns one file per status record.
+ */
+export function parseNameStatus(text) {
+  const parts = String(text).split('\0')
+  const files = []
+  for (let index = 0; index < parts.length; index += 1) {
+    const status = parts[index]
+    if (status === undefined || status === '') continue
+    const kind = status[0]
+    if (kind === 'R' || kind === 'C') {
+      const oldPath = parts[index + 1]
+      const path = parts[index + 2]
+      if (oldPath === undefined || path === undefined || oldPath === '' || path === '') break
+      files.push({ status: kind, path, oldPath })
+      index += 2
+      continue
+    }
+    const path = parts[index + 1]
+    if (path === undefined || path === '') break
+    files.push({ status: kind, path, oldPath: null })
+    index += 1
+  }
+  return files
+}
+
+/**
+ * Parse `git diff-tree --numstat -z`.
+ *
+ * A rename leaves the path column empty and puts the old and new paths in the
+ * following NUL fields. `-` means a binary file, which has no line counts.
+ * @param text - the raw stdout, without a leading commit id.
+ * @returns one file per numstat record.
+ */
+export function parseNumstat(text) {
+  const parts = String(text).split('\0')
+  const files = []
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index]
+    if (record === undefined || record === '') continue
+    const first = record.indexOf('\t')
+    const second = first === -1 ? -1 : record.indexOf('\t', first + 1)
+    if (first < 0 || second < 0) continue
+    const added = record.slice(0, first)
+    const removed = record.slice(first + 1, second)
+    const inline = record.slice(second + 1)
+    const counts = {
+      additions: added === '-' ? null : Number(added),
+      deletions: removed === '-' ? null : Number(removed),
+    }
+    if (inline === '') {
+      const oldPath = parts[index + 1]
+      const path = parts[index + 2]
+      if (oldPath === undefined || path === undefined || oldPath === '' || path === '') break
+      files.push({ ...counts, path, oldPath })
+      index += 2
+      continue
+    }
+    files.push({ ...counts, path: inline, oldPath: null })
+  }
+  return files
+}
+
+/**
+ * Attach line counts to status rows from the matching numstat output.
+ *
+ * The two commands are run with the same revision and rename detection, so
+ * equal positions are the same file. A length mismatch falls back to the path.
+ * @param statuses - name-status rows.
+ * @param stats - numstat rows.
+ * @returns status rows with additions and deletions.
+ */
+export function mergeCommitFiles(statuses, stats) {
+  return statuses.map((file, index) => {
+    const samePlace = stats[index]
+    const stat = samePlace !== undefined && samePlace.path === file.path
+      ? samePlace
+      : stats.find(item => item.path === file.path && item.oldPath === file.oldPath)
+    return {
+      status: file.status,
+      path: file.path,
+      oldPath: file.oldPath,
+      additions: stat === undefined ? null : stat.additions,
+      deletions: stat === undefined ? null : stat.deletions,
+    }
+  })
+}

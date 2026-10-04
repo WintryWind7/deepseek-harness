@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Wintry · Git",
-    "description": "从作曲栏打开当前工作区的 Git 分支、上游跟踪和未提交文件。"
+    "description": "从作曲栏打开当前工作区的 Git 分支、远端和未提交文件，并可在无冲突时推送。"
   }
 }

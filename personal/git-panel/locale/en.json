@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Wintry · Git",
-    "description": "Shows the workspace Git branch, its upstream tracking state, and the uncommitted files from a composer button."
+    "description": "Shows the workspace Git branch, remotes, and uncommitted files, and can push when every selected remote fast-forwards."
   }
 }
