@@ -1,5 +1,0 @@
-# Profile bundle patch: mounts the Host half. The browser half is discovered
-# from package.json `dsh.client` and `exports["./client"]`.
-- insert:
-    - id: usage-meter
-      name: 'dsh-usage-meter'

@@ -1,0 +1,20 @@
+{
+  "name": "@wintry/git-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Git panel for the dsh Web composer: branch, upstream tracking, and uncommitted files.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}

@@ -43,4 +43,4 @@ insert:
   - after: persona
     row:
       id: env-readme
-      name: '@deepseek-ai/dsh-experimental-personal-agent-presets/main-dev/env-readme.mjs'
+      name: '@wintry/agent-presets/main-dev/env-readme.mjs'

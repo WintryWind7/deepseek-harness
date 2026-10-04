@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-experimental-personal-agent-presets",
+  "name": "@wintry/agent-presets",
   "version": "0.1.7-alpha.2",
   "private": true,
   "type": "module",
@@ -8,7 +8,8 @@
     "./package.json": "./package.json",
     "./adapter.mjs": "./adapter.mjs",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
-    "./project-planner/project-var.mjs": "./project-planner/project-var.mjs"
+    "./project-planner/project-var.mjs": "./project-planner/project-var.mjs",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {

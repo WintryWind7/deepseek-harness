@@ -16,9 +16,9 @@
 
 ## 私有插件
 
-个人插件放在 `packages/experimental/<name>/`。每个可以独立使用的功能对应一个包；`packages/experimental/personal-web-all/` 可以统一聚合这些插件，但不承载具体业务实现。
+个人插件放在 `personal/<短名>/`。每个可以独立使用的功能对应一个包。
 
-实验包使用 `@deepseek-ai/dsh-experimental-*` 名称前缀，设置 `private: true`，不进入官方发布包。不要把个人插件加入 `packages/bundle/web-app` 或其他官方 bundle。个人聚合包和本机 profile composition 是可选的运行接入方式；只有用户明确要求安装、链接或启用插件时，才修改 `C:\Users\Administrator\.dsh`。
+包名使用 `@wintry/<短名>`，设置 `private: true`，不进入官方发布包。不要把个人插件加入 `packages/bundle/web-app` 或其他官方 bundle。本机 profile 的安装和链接是可选的运行接入方式；只有用户明确要求安装、链接或启用插件时，才修改 `C:\Users\Administrator\.dsh`。
 
 插件实现、测试、样式、包配置和包文档应放在对应插件目录。任务需要新增 workspace 包时，可以同时修改必要的根 TypeScript aggregate、`pnpm-lock.yaml`、`packages/experimental/README` 中英文索引及配对记录、生成的依赖文档和直接相关的测试 fixture。
 
@@ -30,7 +30,7 @@
 
 0.1.7 起官方不再扫描 `~/.dsh/.agent-presets` 目录。个人 preset 以 `personal/agent-presets/` 的 bundle（`package.json` + `cordis.patch.yml` 插入 `@deepseek-ai/dsh-agent-preset`）为准；Skill、persona 辅助脚本仍放在该目录。只有用户明确要求安装或链接时，才在 web profile 的 `package.json` 里 link 该 bundle。已在跑的会话继续使用启动时挂载的代际。
 
-Preset 里的插件 `name` 不要写 `./foo.mjs`：相对路径从 profile 目录解析，不是从 bundle 包目录。要用包名 subpath（例如 `@deepseek-ai/dsh-experimental-personal-agent-presets/main-dev/env-readme.mjs`），并在该 bundle 的 `package.json` `exports` 里登记。
+Preset 里的插件 `name` 不要写 `./foo.mjs`：相对路径从 profile 目录解析，不是从 bundle 包目录。要用包名 subpath（例如 `@wintry/agent-presets/main-dev/env-readme.mjs`），并在该 bundle 的 `package.json` `exports` 里登记。
 
 截图、诊断脚本、日志和其他临时文件放在系统临时目录，不放进源码仓库。发现意外生成的仓库文件时先报告来源；只清理当前任务创建的临时文件或用户明确确认删除的文件，不删除无关的已跟踪或未跟踪内容，也不用宽泛忽略规则隐藏异常来源。
 

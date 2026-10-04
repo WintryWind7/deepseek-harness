@@ -1,0 +1,20 @@
+{
+  "name": "@wintry/prompts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prompt library for the dsh Web composer: pick a saved prompt into the input, and edit the library in the panel or in personal settings.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@wintry/settings"]
+    }
+  }
+}

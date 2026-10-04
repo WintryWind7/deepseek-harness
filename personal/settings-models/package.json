@@ -1,0 +1,21 @@
+{
+  "name": "@wintry/settings-models",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Model configuration page for the personal settings shell: per-model name, context window, output cap, open reasoning levels, and input types.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-locale"]
+    }
+  }
+}

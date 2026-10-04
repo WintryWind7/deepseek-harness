@@ -1,0 +1,24 @@
+{
+  "name": "@wintry/keepalive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Keeps recently visited Sessions warm on the Web client so switching back is immediate.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-session"
+      ]
+    }
+  }
+}

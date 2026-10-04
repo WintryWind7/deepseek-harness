@@ -137,4 +137,4 @@ insert:
   - before: persona
     row:
       id: project-prompt-var
-      name: '@deepseek-ai/dsh-experimental-personal-agent-presets/project-planner/project-var.mjs'
+      name: '@wintry/agent-presets/project-planner/project-var.mjs'

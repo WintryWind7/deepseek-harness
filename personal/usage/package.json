@@ -1,0 +1,20 @@
+{
+  "name": "@wintry/usage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Adds a usage icon after the composer statistics row. The icon opens this session's usage and totals for this process, a recent window, or every stored call.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}

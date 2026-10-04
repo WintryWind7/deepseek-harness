@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Wintry · Usage",
+    "description": "Adds a usage icon after the composer statistics. Opening it shows this session's usage and totals for this process, a recent window, or every stored call."
+  }
+}

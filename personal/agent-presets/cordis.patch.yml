@@ -1,4 +1,4 @@
 # Personal presets. adapter.mjs reads presets/*.yml and registers them on the shipped standard preset.
 - insert:
     - id: personal-agent-presets
-      name: '@deepseek-ai/dsh-experimental-personal-agent-presets/adapter.mjs'
+      name: '@wintry/agent-presets/adapter.mjs'

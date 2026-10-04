@@ -1,0 +1,4 @@
+# Mounts the host row. The browser half keeps recent Sessions retained.
+- insert:
+    - id: session-keepalive
+      name: '@wintry/keepalive'
