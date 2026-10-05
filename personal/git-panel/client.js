@@ -1165,7 +1165,9 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         if (openOid === null) return;
-        const node = document.querySelector('[data-git-panel-commit="' + CSS.escape(openOid) + '"]');
+        // The id is a full hex object id, so it needs no CSS escaping and the
+        // selector cannot be broken by it.
+        const node = document.querySelector('[data-git-panel-commit="' + openOid + '"]');
         if (node !== null) node.scrollIntoView({ block: 'nearest' });
       }, [openOid]);
 
