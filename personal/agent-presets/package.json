@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Personal agent presets for the WintryWind7 dsh fork",
   "exports": {
+    ".": "./team-dev/host.mjs",
+    "./client": "./team-dev/client.js",
+    "./icon": "./team-dev/icon.svg",
     "./package.json": "./package.json",
     "./adapter.mjs": "./adapter.mjs",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
@@ -15,6 +18,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-workspace"]
     }
-  }
+  },
+  "files": ["adapter.mjs", "cordis.patch.yml", "presets", "shared.yml", "main-dev", "team-dev", "project-planner", "screenshot-document", "skills", "locale", "README.md"]
 }
