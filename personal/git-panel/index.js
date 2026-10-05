@@ -339,23 +339,27 @@ async function classifyRemote(ctx, cwd, remote, branch, signal) {
   const fetched = await git(ctx, cwd, [
     'fetch', '--no-tags', remote, `+refs/heads/${branch}:${tracking}`,
   ], signal, NETWORK_MS)
-  if (fetched.aborted || fetched.exitCode === null) return { name: remote, kind: 'unreachable' }
+  if (fetched.aborted || fetched.exitCode === null) {
+    return { name: remote, kind: 'unreachable', detail: firstLine(fetched.stderr) }
+  }
   if (fetched.exitCode !== 0) {
-    if (/couldn't find remote ref/i.test(fetched.stderr)) return { name: remote, kind: 'absent' }
-    return { name: remote, kind: 'unreachable' }
+    if (/couldn't find remote ref/i.test(fetched.stderr)) {
+      return { name: remote, kind: 'absent', detail: firstLine(fetched.stderr) }
+    }
+    return { name: remote, kind: 'unreachable', detail: firstLine(fetched.stderr) }
   }
-  const parsed = await git(ctx, cwd, ['rev-parse', '--verify', 'HEAD', tracking], signal, LOCAL_MS)
-  const lines = parsed.stdout.split(/\r?\n/).filter(item => item !== '')
-  const head = lines[0]
-  const tip = lines[1]
-  if (parsed.exitCode !== 0 || !OID.test(head ?? '') || !OID.test(tip ?? '')) {
-    return { name: remote, kind: 'unreachable' }
+  const head = await git(ctx, cwd, ['rev-parse', '--verify', 'HEAD'], signal, LOCAL_MS)
+  const tipRef = await git(ctx, cwd, ['rev-parse', '--verify', tracking], signal, LOCAL_MS)
+  const headOid = head.stdout.trim()
+  const tipOid = tipRef.stdout.trim()
+  if (head.exitCode !== 0 || tipRef.exitCode !== 0 || !OID.test(headOid) || !OID.test(tipOid)) {
+    return { name: remote, kind: 'unreachable', detail: firstLine(head.stderr || tipRef.stderr) }
   }
-  if (head.toLowerCase() === tip.toLowerCase()) return { name: remote, kind: 'same' }
-  const ancestor = await git(ctx, cwd, ['merge-base', '--is-ancestor', tip, 'HEAD'], signal, LOCAL_MS)
+  if (headOid.toLowerCase() === tipOid.toLowerCase()) return { name: remote, kind: 'same' }
+  const ancestor = await git(ctx, cwd, ['merge-base', '--is-ancestor', tipOid, 'HEAD'], signal, LOCAL_MS)
   if (ancestor.exitCode === 0) return { name: remote, kind: 'ff' }
   if (ancestor.exitCode === 1) return { name: remote, kind: 'diverged' }
-  return { name: remote, kind: 'unreachable' }
+  return { name: remote, kind: 'unreachable', detail: firstLine(ancestor.stderr) }
 }
 
 /**
@@ -402,6 +406,7 @@ async function pushAll(ctx, cwd, signal) {
         diverged: plan.diverged,
         missing: plan.missing,
         unreachable: plan.unreachable,
+        reasons: plan.reasons,
       },
     }
   }

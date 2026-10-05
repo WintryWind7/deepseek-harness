@@ -274,6 +274,10 @@ export function parseRemotes(text) {
  */
 export function planPush(checks) {
   const names = kind => checks.filter(item => item.kind === kind).map(item => item.name)
+  const reason = kind => ({
+    remotes: names(kind),
+    detail: checks.find(item => item.kind === kind)?.detail ?? '',
+  })
   const diverged = names('diverged')
   const missing = names('absent')
   const known = new Set(['same', 'ff', 'diverged', 'absent', 'unreachable'])
@@ -281,7 +285,17 @@ export function planPush(checks) {
     checks.filter(item => !known.has(item.kind)).map(item => item.name),
   )
   if (diverged.length > 0 || missing.length > 0 || unreachable.length > 0) {
-    return { ok: false, diverged, missing, unreachable }
+    return {
+      ok: false,
+      diverged,
+      missing,
+      unreachable,
+      reasons: {
+        diverged: reason('diverged'),
+        missing: reason('absent'),
+        unreachable: reason('unreachable'),
+      },
+    }
   }
   return { ok: true, updates: names('ff'), current: names('same') }
 }

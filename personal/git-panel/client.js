@@ -834,12 +834,20 @@ window.__ModuleLoader__.load({
       const withDetail = text => (detail === '' ? text : text + ' ' + detail);
       if (body.code === 'blocked') {
         const reasons = [];
-        const diverged = Array.isArray(body.diverged) ? body.diverged : [];
-        const missing = Array.isArray(body.missing) ? body.missing : [];
-        const unreachable = Array.isArray(body.unreachable) ? body.unreachable : [];
-        if (diverged.length > 0) reasons.push(t('reasonDiverged', { remotes: joinNames(diverged, t) }));
-        if (missing.length > 0) reasons.push(t('reasonMissing', { remotes: joinNames(missing, t) }));
-        if (unreachable.length > 0) reasons.push(t('reasonUnreachable', { remotes: joinNames(unreachable, t) }));
+        const reasonsMap = body.reasons !== null && typeof body.reasons === 'object' ? body.reasons : {};
+        const gather = (key, remotes, template) => {
+          const entry = reasonsMap[key] !== null && typeof reasonsMap[key] === 'object' ? reasonsMap[key] : null;
+          const list = Array.isArray(entry?.remotes)
+            ? entry.remotes
+            : Array.isArray(remotes) ? remotes : [];
+          if (list.length === 0) return;
+          const text = t(template, { remotes: joinNames(list, t) });
+          const detail = typeof entry?.detail === 'string' ? entry.detail.trim().slice(0, 160) : '';
+          reasons.push(detail === '' ? text : text + ' ' + detail);
+        };
+        gather('diverged', Array.isArray(body.diverged) ? body.diverged : [], 'reasonDiverged');
+        gather('missing', Array.isArray(body.missing) ? body.missing : [], 'reasonMissing');
+        gather('unreachable', Array.isArray(body.unreachable) ? body.unreachable : [], 'reasonUnreachable');
         if (reasons.length === 0) return t('remoteFailed');
         return t('pushBlocked', { reasons: reasons.join(t('reasonSep')) });
       }
