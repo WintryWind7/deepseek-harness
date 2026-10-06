@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Wintry · Auto continue",
+    "description": "When a model turn ends with reasoning only, steers one continuation so the reply is still produced; counts injections and recoveries per model."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@wintry/llm-continue",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "When a model turn ends after reasoning only, steer one continuation so the reply is still produced; counts per model in a panel.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}
