@@ -35,8 +35,8 @@ export const name = 'llm-continue'
 /** Injected services: the agent registry is not needed; events come from ctx.on. */
 export const inject = ['connection']
 
-/** JSDoc-free config object: plain fields, no schema object is required. */
-export const Config = {
+/** Defaults; a cordis row overrides individual fields. */
+const DEFAULTS = {
   enabled: true,
   /** Maximum continuations steered into a single turn. */
   maxAttempts: 5,
@@ -44,6 +44,43 @@ export const Config = {
   prompt: '上一轮只输出了推理过程，没有给出最终答复。请直接给出结论；如需更多信息，请调用工具获取。',
   /** Steered text for attempts 2..maxAttempts. */
   promptFirm: '你又一次只输出了推理过程而没有给出答复。请立即输出最终答复，不要继续推理。',
+}
+
+/**
+ * Normalize one row's config over {@link DEFAULTS}.
+ * @param raw - the row's config object.
+ * @returns the complete config.
+ */
+function resolveConfig(raw = {}) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('llm-continue config must be an object')
+  for (const key of Object.keys(raw)) {
+    if (!Object.hasOwn(DEFAULTS, key)) throw new Error(`unknown llm-continue config: ${key}`)
+  }
+  const enabled = raw.enabled ?? DEFAULTS.enabled
+  if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean')
+  const maxAttempts = raw.maxAttempts ?? DEFAULTS.maxAttempts
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20) {
+    throw new Error('maxAttempts must be an integer from 1 to 20')
+  }
+  const prompt = raw.prompt ?? DEFAULTS.prompt
+  if (typeof prompt !== 'string' || prompt.length === 0) throw new Error('prompt must be a non-empty string')
+  const promptFirm = raw.promptFirm ?? DEFAULTS.promptFirm
+  if (typeof promptFirm !== 'string' || promptFirm.length === 0) throw new Error('promptFirm must be a non-empty string')
+  return { enabled, maxAttempts, prompt, promptFirm }
+}
+
+/**
+ * Cordis reads every plugin's config through Standard Schema: a declared
+ * `Config` without `~standard` throws before `apply` runs, and the value
+ * `validate` returns is what `apply` receives.
+ */
+export const Config = {
+  '~standard': {
+    version: 1, vendor: 'wintry-llm-continue',
+    validate(raw) {
+      try { return { value: resolveConfig(raw) } } catch (error) { return { issues: [{ message: error.message }] } }
+    },
+  },
 }
 
 /** Directory name under the harness home for this user's own plugin data. */
@@ -423,9 +460,9 @@ const RECENT_LIMIT = 6
 /**
  * Mount the steering listener and its read route.
  * @param ctx - host context carrying the authenticated fetch registry.
+ * @param config - the row's config, already normalized by {@link Config}.
  */
-export function apply(ctx) {
-  const config = { ...Config, ...(ctx.get?.('config') ?? {}) }
+export function apply(ctx, config = resolveConfig({})) {
   ctx.effect(() => {
     const directory = pluginDirectory()
     const root = join(directory, CONTINUES_DIR)
