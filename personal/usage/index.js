@@ -412,6 +412,9 @@ function addModel(byModel, row) {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       outputTokens: 0,
+      calls: 0,
+      decodeMs: 0,
+      decodeTokens: 0,
     }
     byModel.set(key, slot)
   }
@@ -419,6 +422,11 @@ function addModel(byModel, row) {
   slot.cacheReadTokens += row.cacheReadTokens
   slot.cacheWriteTokens += row.cacheWriteTokens
   slot.outputTokens += row.outputTokens
+  slot.calls += 1
+  if (row.decodeMs > 0) {
+    slot.decodeMs += row.decodeMs
+    slot.decodeTokens += row.outputTokens
+  }
 }
 
 /**
@@ -434,7 +442,7 @@ function modelTotal(row) {
  * @returns providers, then models, each from the largest total.
  */
 function providersFrom(byModel) {
-  /** @type {Map<string, { provider: string, models: Array<{ model: string, uncachedInputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, outputTokens: number }> }>} */
+  /** @type {Map<string, { provider: string, models: Array<{ model: string, uncachedInputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, outputTokens: number, calls: number, decodeMs: number, decodeTokens: number }> }>} */
   const groups = new Map()
   for (const row of byModel.values()) {
     let group = groups.get(row.provider)
@@ -448,6 +456,9 @@ function providersFrom(byModel) {
       cacheReadTokens: row.cacheReadTokens,
       cacheWriteTokens: row.cacheWriteTokens,
       outputTokens: row.outputTokens,
+      calls: row.calls,
+      decodeMs: row.decodeMs,
+      decodeTokens: row.decodeTokens,
     })
   }
   const providers = [...groups.values()]

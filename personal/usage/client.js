@@ -60,6 +60,9 @@ window.__ModuleLoader__.load({
       ledgerBrief: '{turns} 轮 · {steps} 步',
       ledgerRangeBrief: '{range} · {turns} 轮 · {steps} 步',
       countBrief: '{count} 次',
+      calls: '次数',
+      avgInput: '平均输入',
+      avgOutput: '平均输出',
       count: '次数',
       speed: '输出速度',
       speedValue: '{tps} tok/s',
@@ -106,6 +109,9 @@ window.__ModuleLoader__.load({
       ledgerBrief: '{turns} turns · {steps} steps',
       ledgerRangeBrief: '{range} · {turns} turns · {steps} steps',
       countBrief: '{count} times',
+      calls: 'Calls',
+      avgInput: 'Average input',
+      avgOutput: 'Average output',
       count: 'Count',
       speed: 'Output speed',
       speedValue: '{tps} tok/s',
@@ -764,20 +770,28 @@ window.__ModuleLoader__.load({
 
     /**
      * @param model - one model total.
-     * @returns the three bar parts. Input on the bar includes cache write.
+     * @returns the bar parts plus the per-call averages and decode rate.
      */
     function barParts(model) {
       const cache = count(model?.cacheReadTokens) ?? 0;
       const uncached = count(model?.uncachedInputTokens) ?? 0;
       const write = count(model?.cacheWriteTokens) ?? 0;
       const output = count(model?.outputTokens) ?? 0;
+      const calls = count(model?.calls) ?? 0;
+      const decodeMs = count(model?.decodeMs) ?? 0;
+      const decodeTokens = count(model?.decodeTokens) ?? 0;
+      const input = uncached + write;
+      const total = cache + input + output;
       return {
         cache,
-        uncached,
         write,
-        input: uncached + write,
+        input,
         output,
-        total: cache + uncached + write + output,
+        total,
+        calls,
+        avgInput: calls > 0 ? input / calls : 0,
+        avgOutput: calls > 0 ? output / calls : 0,
+        tps: decodeMs > 0 ? formatSpeed(decodeTokens / (decodeMs / 1000)) : '0',
       };
     }
 
@@ -815,7 +829,7 @@ window.__ModuleLoader__.load({
       if (listed === 0) return h('p', { className: 'um-empty' }, t('modelCount', { count: '0' }));
       const place = (event, row) => {
         const width = 240;
-        const height = 156;
+        const height = 216;
         const margin = 12;
         let x = event.clientX + margin;
         let y = event.clientY + margin;
@@ -823,20 +837,25 @@ window.__ModuleLoader__.load({
         if (y + height > window.innerHeight - 8) y = event.clientY - height - margin;
         setTip({ ...row, x, y });
       };
-      const tipNode = tip === null ? null : createPortal(h('div', {
-        className: 'um-tip',
-        style: { left: `${tip.x}px`, top: `${tip.y}px` },
-      },
-      h('p', { className: 'um-tipTitle' }, `${tip.provider} / ${tip.model}`),
-      [
-        ['cacheHit', tip.cache],
-        ['input', tip.uncached],
-        ['cacheWrite', tip.write],
-        ['output', tip.output],
-        ['total', tip.total],
+      const tipRows = tip === null ? [] : [
+        ['cacheHit', t('tokens', { count: formatExact(tip.cache) })],
+        ['input', t('tokens', { count: formatExact(tip.input) })],
+        ['output', t('tokens', { count: formatExact(tip.output) })],
+        ['total', t('tokens', { count: formatExact(tip.total) })],
+        ['calls', formatExact(tip.calls)],
+        ['avgInput', t('tokens', { count: formatExact(tip.avgInput) })],
+        ['avgOutput', t('tokens', { count: formatExact(tip.avgOutput) })],
+        ['speed', t('speedValue', { tps: tip.tps })],
       ].map(entry => h('div', { key: entry[0], className: 'um-tipRow' },
         h('span', { className: 'um-tipLabel' }, t(entry[0])),
-        h('span', null, t('tokens', { count: formatExact(entry[1]) }))))), document.body);
+        h('span', null, entry[1])));
+      const tipChildren = tip === null ? [] : [
+        h('p', { key: 'title', className: 'um-tipTitle' }, `${tip.provider} / ${tip.model}`),
+        ...tipRows,
+      ];
+      const tipNode = tip === null ? null : createPortal(
+        h('div', { className: 'um-tip', style: { left: `${tip.x}px`, top: `${tip.y}px` } }, ...tipChildren),
+        document.body);
       return h('div', null,
         h('div', { className: 'um-legend' },
           h('span', { className: 'um-legendItem' }, h('i', { className: 'um-swatch um-cache' }), t('cacheHit')),
