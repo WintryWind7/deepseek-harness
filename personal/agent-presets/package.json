@@ -5,24 +5,17 @@
   "type": "module",
   "description": "Personal agent presets for the WintryWind7 dsh fork",
   "exports": {
-    ".": "./team-dev/host.mjs",
-    "./client": "./team-dev/client.js",
-    "./icon": "./team-dev/icon.svg",
-    "./package.json": "./package.json",
+    ".": "./adapter.mjs",
     "./adapter.mjs": "./adapter.mjs",
+    "./package.json": "./package.json",
     "./main-dev/env-readme.mjs": "./main-dev/env-readme.mjs",
-    "./team-dev/sessions.mjs": "./team-dev/sessions.mjs",
     "./project-planner/project-var.mjs": "./project-planner/project-var.mjs",
     "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-workspace"]
     }
   },
-  "files": ["adapter.mjs", "cordis.patch.yml", "presets", "shared.yml", "main-dev", "team-dev", "project-planner", "screenshot-document", "skills", "locale", "README.md"]
+  "files": ["adapter.mjs", "cordis.patch.yml", "presets", "shared.yml", "main-dev", "project-planner", "screenshot-document", "skills", "locale", "README.md"]
 }

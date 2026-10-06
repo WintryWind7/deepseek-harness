@@ -7,7 +7,7 @@
  * id, an unknown file key, or an unreadable base fails the apply; a later edit
  * that fails the same way keeps the last registration that succeeded.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yaml from 'js-yaml'
@@ -25,6 +25,42 @@ export const inject = ['agentPresets']
 
 const PRESETS_DIR = join(here, 'presets')
 const SHARED_FILE = join(here, 'shared.yml')
+
+/**
+ * Every directory this adapter registers presets from: its own `presets/`, plus
+ * the `presets/` of each sibling personal plugin bundle. A plugin that owns its
+ * preset keeps the file next to its other halves instead of copying it here.
+ * @returns the existing directories, sorted for a stable registration order.
+ */
+function presetsDirs() {
+  const found = new Map()
+  const add = (dir) => {
+    if (!existsSync(dir)) return
+    const key = realpathSync(dir)
+    if (!found.has(key)) found.set(key, dir)
+  }
+  add(PRESETS_DIR)
+  let siblings = []
+  try {
+    siblings = readdirSync(join(here, '..'), { withFileTypes: true })
+  } catch {
+    // A packaged install without readable siblings still registers its own presets.
+    siblings = []
+  }
+  for (const entry of siblings) {
+    if (!entry.isDirectory()) continue
+    add(join(here, '..', entry.name, 'presets'))
+  }
+  return [...found.values()]
+}
+
+/** @param {string} dir */
+function presetFilesIn(dir) {
+  return readdirSync(dir)
+    .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
+    .sort()
+    .map(name => join(dir, name))
+}
 const FILE_KEYS = new Set(['id', 'name', 'description', 'order', 'base', 'omit', 'persona', 'rows', 'insert'])
 
 /** @param {string} base */
@@ -236,11 +272,11 @@ export function definitionFromFile(file) {
   }
 }
 
-/** @param {string} directory */
-export function definitionsFromDirectory(directory) {
-  const files = readdirSync(directory).filter(name => name.endsWith('.yml') || name.endsWith('.yaml')).sort()
-  if (files.length === 0) throw new Error(`no personal preset files in ${directory}`)
-  const definitions = files.map(name => definitionFromFile(join(directory, name)))
+/** @param {readonly string[]} directories */
+export function definitionsFromPresets(directories) {
+  const files = directories.flatMap(presetFilesIn)
+  if (files.length === 0) throw new Error(`no personal preset files in ${directories.join(', ')}`)
+  const definitions = files.map(definitionFromFile)
   const seen = new Set()
   for (const definition of definitions) {
     if (seen.has(definition.id)) throw new Error(`duplicate personal preset id: ${definition.id}`)
@@ -273,10 +309,11 @@ export async function apply(ctx) {
   const reload = () => {
     const run = queue.then(async () => {
       if (closed) return
-      const files = [SHARED_FILE, ...readdirSync(PRESETS_DIR).filter(name => name.endsWith('.yml') || name.endsWith('.yaml')).sort().map(name => join(PRESETS_DIR, name))]
+      const dirs = presetsDirs()
+      const files = [SHARED_FILE, ...dirs.flatMap(presetFilesIn)]
       const text = files.map(name => readFileSync(name, 'utf8')).join('\0')
       if (text === stamp) return
-      const definitions = definitionsFromDirectory(PRESETS_DIR)
+      const definitions = definitionsFromPresets(dirs)
       const previous = active
       active = []
       for (const dispose of previous) await dispose()
@@ -316,7 +353,8 @@ export async function apply(ctx) {
       const stops = []
       let disposed = false
       const starting = (async () => {
-        const files = [SHARED_FILE, ...readdirSync(PRESETS_DIR).filter(name => name.endsWith('.yml') || name.endsWith('.yaml')).map(name => join(PRESETS_DIR, name))]
+        // Watchers bind once at apply: a preset directory added later needs a restart.
+        const files = [SHARED_FILE, ...presetsDirs().flatMap(presetFilesIn)]
         for (const name of files) {
           if (disposed) return
           stops.push(await child.hmr.watchConfig(name, async () => {

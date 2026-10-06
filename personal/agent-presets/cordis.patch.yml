@@ -2,8 +2,3 @@
 - insert:
     - id: personal-agent-presets
       name: '@wintry/agent-presets/adapter.mjs'
-    - id: personal-team-sessions
-      name: '@wintry/agent-presets'
-      config:
-        resultChars: 12000
-        questionHistoryLimit: 64
