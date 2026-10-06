@@ -1,0 +1,30 @@
+{
+  "name": "@wintry/team",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "团队协作：Lead 管理根会话、每轮结果回传、提问转发，以及只读的团队面板。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./sessions": "./sessions.js",
+    "./presets/team-dev": "./presets/team-dev.yml",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@wintry/settings"
+      ]
+    }
+  },
+  "files": ["index.js", "sessions.js", "questions.js", "runtime.js", "client.js", "icon.svg", "cordis.patch.yml", "presets", "locale", "README.md"]
+}

@@ -1,0 +1,13 @@
+# Profile bundle patch: mounts the Host half. The browser half is discovered
+# from package.json `dsh.client` and `exports["./client"]`; the team-dev preset
+# is registered from presets/team-dev.yml.
+- insert:
+    # 团队管理 Host：管理关系、轮次回传、提问转发和面板共用一个实例。
+    - id: team
+      name: '@wintry/team'
+      config:
+        resultChars: 12000
+        questionHistoryLimit: 64
+    # Lead 工具由 presets/team-dev.yml 的 lead-sessions 行挂载。这里不再插一份：
+    # 同一个包两个 Loader 行会让 client-modules 报重复来源，也会把六个工具
+    # 注册进每个会话的工具表。
