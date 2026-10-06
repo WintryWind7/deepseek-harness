@@ -20,6 +20,8 @@ window.__ModuleLoader__.load({
     const {
       IconBranchOutlineRegular,
       IconCheckOutlineRegular,
+      IconChevronDownOutlineRegular,
+      IconChevronRightOutlineRegular,
       IconCloseOutlineRegular,
       IconEditOutlineRegular,
       IconPaperPlaneOutlineRegular,
@@ -302,7 +304,7 @@ window.__ModuleLoader__.load({
       .gp-commit:hover { background: var(--dsw-alias-interactive-bg-hover); }
       .gp-commit:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
       .gp-detail {
-        margin: 0 8px 8px 48px; padding: 12px; border-radius: 8px;
+        margin: 0 4px 8px; padding: 12px; border-radius: 8px;
         background: var(--dsw-alias-bg-overlay);
         border: 1px solid var(--dsw-alias-border-l1);
       }
@@ -397,6 +399,19 @@ window.__ModuleLoader__.load({
         gap: 8px; margin: 0 4px 4px;
       }
       .gp-sectionHead .gp-sectionTitle { margin: 0; }
+      .gp-sectionToggle {
+        display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+        border: none; border-radius: 8px; padding: 4px; margin-left: -4px;
+        background: none; color: var(--dsw-alias-label-tertiary);
+        cursor: pointer; font-size: 11px;
+      }
+      .gp-sectionToggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+      .gp-sectionToggle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+      .gp-sectionToggle[aria-expanded='true'] .gp-sectionTitle { color: var(--dsw-alias-label-secondary); }
+      .gp-failDot {
+        flex: none; width: 6px; height: 6px; border-radius: 3px;
+        background: var(--dsw-alias-state-error-primary);
+      }
       .gp-push {
         display: inline-flex; align-items: center; gap: 4px; flex: none;
         border: none; border-radius: 8px; padding: 4px 10px;
@@ -895,6 +910,7 @@ window.__ModuleLoader__.load({
       const t = props.t;
       const value = props.value;
       const disabled = props.acting !== null || props.busy;
+      const [expanded, setExpanded] = useState(false);
       if (!value.remotesKnown) {
         if (value.staleHost) return null;
         return h('div', { className: 'gp-notice' }, t('remotesStale'));
@@ -984,9 +1000,21 @@ window.__ModuleLoader__.load({
               }, h(IconTrashOutlineRegular, { size: 16 }))));
       });
 
-      return h('div', { className: 'gp-section', 'data-git-panel-remotes': 'true' },
+      return h('div', { className: 'gp-section', 'data-git-panel-remotes': expanded ? 'open' : 'closed' },
         h('div', { className: 'gp-sectionHead' },
-          h('div', { className: 'gp-sectionTitle' }, t('remotesTitle')),
+          h('button', {
+            type: 'button',
+            className: 'gp-sectionToggle',
+            'aria-expanded': expanded,
+            onClick: () => { setExpanded(current => !current); },
+          },
+          expanded
+            ? h(IconChevronDownOutlineRegular, { size: 16 })
+            : h(IconChevronRightOutlineRegular, { size: 16 }),
+          h('span', { className: 'gp-sectionTitle' }, t('remotesTitle')),
+          value.remotesFailed
+            ? h('span', { className: 'gp-failDot', title: t('remotesFailed'), 'aria-hidden': true })
+            : null),
           h('button', {
             type: 'button',
             className: 'gp-push',
@@ -997,40 +1025,41 @@ window.__ModuleLoader__.load({
           },
           h(IconPaperPlaneOutlineRegular, { size: 14 }),
           props.acting === 'push' ? t('pushBusy') : t('pushAll'))),
-        h('div', { className: 'gp-hint' }, hint),
         notice,
-        value.remotesFailed ? h('div', { className: 'gp-error' }, t('remotesFailed')) : null,
-        h('div', { className: 'gp-box gp-remotesBox' },
-          rows,
-          value.remotes.length === 0 ? h('div', { className: 'gp-notice' }, t('noRemotes')) : null,
-          h('form', {
-            className: 'gp-add',
-            onSubmit: event => {
-              event.preventDefault();
-              if (!disabled && props.addName.trim() !== '' && props.addUrl.trim() !== '') props.onAdd();
+        value.remotesFailed && expanded ? h('div', { className: 'gp-error' }, t('remotesFailed')) : null,
+        !expanded ? null : h('div', null,
+          h('div', { className: 'gp-hint' }, hint),
+          h('div', { className: 'gp-box gp-remotesBox' },
+            rows,
+            value.remotes.length === 0 ? h('div', { className: 'gp-notice' }, t('noRemotes')) : null,
+            h('form', {
+              className: 'gp-add',
+              onSubmit: event => {
+                event.preventDefault();
+                if (!disabled && props.addName.trim() !== '' && props.addUrl.trim() !== '') props.onAdd();
+              },
             },
-          },
-          h('input', {
-            className: 'gp-field gp-field-name',
-            'aria-label': t('remoteName'),
-            placeholder: t('remoteName'),
-            value: props.addName,
-            disabled,
-            onChange: event => { props.onAddName(event.target.value); },
-          }),
-          h('input', {
-            className: 'gp-field',
-            'aria-label': t('remoteUrl'),
-            placeholder: t('remoteUrl'),
-            value: props.addUrl,
-            disabled,
-            onChange: event => { props.onAddUrl(event.target.value); },
-          }),
-          h('button', {
-            type: 'submit',
-            className: 'gp-textButton',
-            disabled: disabled || props.addName.trim() === '' || props.addUrl.trim() === '',
-          }, t('addRemote')))));
+            h('input', {
+              className: 'gp-field gp-field-name',
+              'aria-label': t('remoteName'),
+              placeholder: t('remoteName'),
+              value: props.addName,
+              disabled,
+              onChange: event => { props.onAddName(event.target.value); },
+            }),
+            h('input', {
+              className: 'gp-field',
+              'aria-label': t('remoteUrl'),
+              placeholder: t('remoteUrl'),
+              value: props.addUrl,
+              disabled,
+              onChange: event => { props.onAddUrl(event.target.value); },
+            }),
+            h('button', {
+              type: 'submit',
+              className: 'gp-textButton',
+              disabled: disabled || props.addName.trim() === '' || props.addUrl.trim() === '',
+            }, t('addRemote'))))));
     }
 
     /**
