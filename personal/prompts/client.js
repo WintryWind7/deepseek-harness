@@ -26,6 +26,7 @@ window.__ModuleLoader__.load({
     const TOOLBAR = 'personal.settings.toolbar'
     /** Matches the Host library limits. */
     const MAX_PROMPTS = 200
+    const MAX_TITLE = 200
     const MAX_BODY = 100000
 
     const zh = {
@@ -43,12 +44,13 @@ window.__ModuleLoader__.load({
       conflict: '库刚在别处改过。重新读取后再保存。',
       emptyTitle: '标题不能为空。',
       tooLong: '有一条正文超出长度限制。',
+      titleTooLong: '标题最长 200 字。',
       titleField: '标题',
       bodyField: '正文',
       full: '最多保存 200 条。',
       invalid: '这条库无法保存。',
       save: '保存',
-      unsaved: '{count} 个更改未保存',
+      unsaved: '{count} 处未保存的更改',
       create: '新建',
       edit: '编辑',
       collapse: '收起',
@@ -80,6 +82,7 @@ window.__ModuleLoader__.load({
       conflict: 'The library changed elsewhere. Reload it, then save again.',
       emptyTitle: 'A title is required.',
       tooLong: 'One body is over the length limit.',
+      titleTooLong: 'A title can be at most 200 characters.',
       titleField: 'Title',
       bodyField: 'Body',
       full: 'The library already has 200 prompts.',
@@ -266,10 +269,30 @@ window.__ModuleLoader__.load({
       return { revision: value.revision, prompts }
     }
 
+    /**
+     * One candidate id: 16 lowercase hex characters, the form stored ids
+     * already use and the Host id pattern accepts. `crypto.randomUUID` exists
+     * only in a secure context, so an insecure origin (a LAN address over plain
+     * HTTP) falls back to `crypto.getRandomValues`, which every origin exposes.
+     * @returns the id.
+     */
+    function newId() {
+      if (typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID().replaceAll('-', '').slice(0, 16)
+      }
+      const bytes = crypto.getRandomValues(new Uint8Array(8))
+      return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+    }
+
+    /**
+     * An id no current draft uses.
+     * @param prompts - the drafts the id must not collide with.
+     * @returns the id.
+     */
     function freshId(prompts) {
       const used = new Set(prompts.map(item => item.id))
-      let id = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
-      while (used.has(id)) id = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
+      let id = newId()
+      while (used.has(id)) id = newId()
       return id
     }
 
@@ -309,8 +332,46 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Re-read the library in the background when nothing here is unsaved,
+     * because the settings page or another tab may have saved a newer revision.
+     * A refresh that fails, or that answers with something unusable, leaves the
+     * library already on screen unchanged.
+     */
+    async function refreshLibrary() {
+      if (snapshot.saving || countDirty(snapshot.saved, snapshot.drafts) > 0) return
+      const seq = ++loadSeq
+      let body
+      try {
+        body = await (await fetch(ROUTE, { headers: { accept: 'application/json' } })).json()
+      } catch (error) {
+        // The refresh did not answer. The library on screen stays as it is.
+        return
+      }
+      if (seq !== loadSeq) return
+      const value = libraryFrom(body)
+      if (value === null) return
+      const latest = snapshot
+      if (latest.saving || countDirty(latest.saved, latest.drafts) > 0) return
+      publish({
+        ...latest,
+        status: 'ready',
+        error: '',
+        notice: '',
+        conflict: false,
+        saving: false,
+        revision: value.revision,
+        saved: value.prompts,
+        drafts: value.prompts.map(copyPrompt),
+      })
+    }
+
     function loadLibrary() {
-      if (snapshot.status === 'ready' || snapshot.status === 'loading') return
+      if (snapshot.status === 'loading') return
+      if (snapshot.status === 'ready') {
+        void refreshLibrary()
+        return
+      }
       void startLoad()
     }
 
@@ -359,8 +420,13 @@ window.__ModuleLoader__.load({
       const current = snapshot
       if (current.status !== 'ready' || current.saving || countDirty(current.saved, current.drafts) === 0) return
       for (const prompt of current.drafts) {
-        if (prompt.title.trim() === '') {
+        const title = prompt.title.trim()
+        if (title === '') {
           publish({ ...current, error: 'emptyTitle', notice: '' })
+          return
+        }
+        if (title.length > MAX_TITLE) {
+          publish({ ...current, error: 'titleTooLong', notice: '' })
           return
         }
         if (prompt.body.length > MAX_BODY) {
@@ -509,6 +575,7 @@ window.__ModuleLoader__.load({
                   className: 'pl-input',
                   value: item.title,
                   disabled,
+                  autoFocus: true,
                   onChange: event => { changePrompt(item.id, { title: event.target.value }) },
                 })),
               h('label', { className: 'pl-field' },
@@ -582,6 +649,7 @@ window.__ModuleLoader__.load({
               value: filter,
               placeholder: t('search'),
               'aria-label': t('search'),
+              'data-modal-autofocus': props.mode === 'panel' ? '' : undefined,
               onChange: event => { setFilter(event.target.value) },
             }),
             h('button', {
