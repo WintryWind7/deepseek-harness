@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
       IconTrashOutlineRegular,
     } = primitives
     const h = React.createElement
-    const { useEffect, useState, useSyncExternalStore } = React
+    const { useEffect, useRef, useState, useSyncExternalStore } = React
 
     const NS = 'prompt-library'
     const ROUTE = 'api/prompt.library'
@@ -51,6 +51,10 @@ window.__ModuleLoader__.load({
       invalid: '这条库无法保存。',
       save: '保存',
       unsaved: '{count} 处未保存的更改',
+      back: '返回',
+      confirm: '确认',
+      confirmEmpty: '确认后整段写入输入框，不会发送。',
+      confirmAppend: '确认后插在光标处，不覆盖已有内容，也不会发送。',
       create: '新建',
       edit: '编辑',
       collapse: '收起',
@@ -60,9 +64,11 @@ window.__ModuleLoader__.load({
       search: '搜索标题',
       untitled: '未命名',
       empty: '还没有提示词。',
+      emptyBody: '这条还没有正文。',
       noMatch: '没有匹配的标题。',
-      pickHint: '点标题写入输入框，点编辑改这一条。',
+      pickHint: '点标题打开正文页，确认后写入输入框。',
       subtitle: '{count} 条',
+      chars: '{count} 字',
       busy: '输入框正忙，没有写入。',
       insertRejected: '输入框刚被改过，没有写入。',
       panelFailed: '面板渲染失败，已保留图标。详细信息见浏览器控制台。',
@@ -89,6 +95,10 @@ window.__ModuleLoader__.load({
       invalid: 'This library could not be saved.',
       save: 'Save',
       unsaved: '{count} unsaved changes',
+      back: 'Back',
+      confirm: 'Confirm',
+      confirmEmpty: 'Writes the whole body into the empty input. Nothing is sent.',
+      confirmAppend: 'Inserts the body at the caret without replacing anything. Nothing is sent.',
       create: 'New',
       edit: 'Edit',
       collapse: 'Collapse',
@@ -98,9 +108,11 @@ window.__ModuleLoader__.load({
       search: 'Search titles',
       untitled: 'Untitled',
       empty: 'No prompts yet.',
+      emptyBody: 'This prompt has no body yet.',
       noMatch: 'No title matches.',
-      pickHint: 'Choose a title to write it into the input. Edit changes that prompt.',
+      pickHint: 'Choose a title to open its body, then confirm to write it into the input.',
       subtitle: '{count} prompts',
+      chars: '{count} characters',
       busy: 'The input is busy, so nothing was written.',
       insertRejected: 'The input changed, so nothing was written.',
       panelFailed: 'The panel failed to render. The icon stays available; see the browser console for the error.',
@@ -129,7 +141,7 @@ window.__ModuleLoader__.load({
       .pl-heading { min-width: 0; }
       .pl-titleText {
         margin: 0; font-size: 15px; font-weight: 500; line-height: 22px;
-        color: var(--dsw-alias-label-primary);
+        color: var(--dsw-alias-label-primary); overflow-wrap: anywhere;
       }
       .pl-subtitle { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
       .pl-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; flex: 1 1 auto; }
@@ -141,9 +153,26 @@ window.__ModuleLoader__.load({
         overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; padding: 4px;
       }
       .pl-editor-page .pl-listBox { display: flex; flex-direction: column; gap: 8px; }
-      .pl-listBox::-webkit-scrollbar { width: 6px; }
-      .pl-listBox::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 3px; }
-      .pl-listBox::-webkit-scrollbar-track { background: transparent; }
+      .pl-listBox::-webkit-scrollbar, .pl-detailText::-webkit-scrollbar { width: 6px; }
+      .pl-listBox::-webkit-scrollbar-thumb, .pl-detailText::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 3px; }
+      .pl-listBox::-webkit-scrollbar-track, .pl-detailText::-webkit-scrollbar-track { background: transparent; }
+      .pl-detail { gap: 14px; }
+      .pl-detail .pl-header { padding-bottom: 0; }
+      .pl-detail .pl-footer { padding-top: 0; }
+      .pl-detail .pl-heading { flex: 1 1 auto; }
+      .pl-kicker { margin-bottom: 2px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+      .pl-headerActions { display: flex; align-items: center; gap: 4px; flex: none; }
+      .pl-detailSection { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1 1 auto; }
+      .pl-sectionHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 4px; }
+      .pl-sectionTitle, .pl-count { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+      .pl-detailText {
+        flex: 1 1 auto; min-height: 96px; max-height: min(52vh, 460px); overflow-y: auto;
+        margin: 0; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
+        color: var(--dsw-alias-label-primary);
+        font-family: inherit; font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .pl-detailMuted { color: var(--dsw-alias-label-tertiary); }
+      .pl-footerHint { flex: 1 1 auto; min-width: 0; font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-tertiary); }
       .pl-item { min-width: 0; border-radius: 10px; }
       .pl-editor-page .pl-item { border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 16px; padding: 4px 8px; }
       .pl-row { display: flex; align-items: center; gap: 4px; border-radius: 8px; }
@@ -611,8 +640,7 @@ window.__ModuleLoader__.load({
                   toggle(item.id)
                   return
                 }
-                const current = snapshot.drafts.find(row => row.id === item.id)
-                if (current !== undefined) props.onInsert(current)
+                props.onPick(item.id)
               },
             },
             h('span', { className: 'pl-titleTextRow' }, item.title.trim() || t('untitled')),
@@ -665,6 +693,59 @@ window.__ModuleLoader__.load({
         footer)
     }
 
+    /**
+     * Read-only page for one prompt: its title, its whole body, and the confirm
+     * button that writes the body into the composer. A refused write stays on
+     * this page with the reason visible.
+     */
+    function PromptDetail(props) {
+      const t = props.t
+      const prompt = props.prompt
+      const body = prompt.body
+      const confirm = useRef()
+      // The title button this page replaces unmounts, so the page takes focus
+      // back: Enter confirms without a trip through the Tab order.
+      useEffect(() => { confirm.current?.focus() }, [])
+      return h('div', {
+        className: 'pl-card pl-detail',
+        'data-dsh-plugin': 'prompt-library',
+        'data-dsh-part': 'detail',
+      },
+      h('div', { className: 'pl-header' },
+        h('div', { className: 'pl-heading' },
+          h('div', { className: 'pl-kicker' }, t('title')),
+          h('h3', { className: 'pl-titleText' }, prompt.title.trim() || t('untitled'))),
+        h('div', { className: 'pl-headerActions' },
+          h('button', {
+            type: 'button',
+            className: 'pl-ghost',
+            onClick: props.onBack,
+          }, t('back')),
+          h('button', {
+            type: 'button',
+            className: 'pl-iconButton',
+            'aria-label': t('close'),
+            title: t('close'),
+            onClick: props.onClose,
+          }, h(IconCloseOutlineRegular, { size: 16 })))),
+      h('div', { className: 'pl-detailSection' },
+        h('div', { className: 'pl-sectionHead' },
+          h('span', { className: 'pl-sectionTitle' }, t('bodyField')),
+          h('span', { className: 'pl-count' }, t('chars', { count: body.length }))),
+        h('div', {
+          className: body === '' ? 'pl-detailText pl-detailMuted' : 'pl-detailText',
+        }, body === '' ? t('emptyBody') : body)),
+      props.notice === '' ? null : h('div', { className: 'pl-error' }, props.notice),
+      h('div', { className: 'pl-footer' },
+        h('span', { className: 'pl-footerHint' }, t(props.empty ? 'confirmEmpty' : 'confirmAppend')),
+        h('button', {
+          type: 'button',
+          ref: confirm,
+          className: 'pl-save',
+          onClick: props.onConfirm,
+        }, t('confirm'))))
+    }
+
     function Toolbar(props) {
       const bar = useSyncExternalStore(subscribeToolbar, getToolbar, getToolbar)
       return h('div', { className: 'pl-toolbar' },
@@ -705,13 +786,19 @@ window.__ModuleLoader__.load({
       const library = useLibrary()
       const [open, setOpen] = useState(false)
       const [localNotice, setLocalNotice] = useState('')
+      const [viewing, setViewing] = useState()
 
       const openPanel = () => {
         setLocalNotice('')
+        setViewing(undefined)
         setOpen(true)
         loadLibrary()
       }
-      const closePanel = () => { setOpen(false) }
+      const closePanel = () => {
+        setOpen(false)
+        setViewing(undefined)
+        setLocalNotice('')
+      }
       const writePrompt = prompt => {
         const actions = props.inputActions
         if (actions === undefined || phase !== 'plain') {
@@ -724,26 +811,40 @@ window.__ModuleLoader__.load({
           return
         }
         setLocalNotice('')
+        setViewing(undefined)
         setOpen(false)
       }
 
-      const panel = h('div', {
-        className: 'pl-card',
-        'data-dsh-plugin': 'prompt-library',
-        'data-dsh-part': 'dialog',
-      },
-      h('div', { className: 'pl-header' },
-        h('div', { className: 'pl-heading' },
-          h('h3', { className: 'pl-titleText' }, t('title')),
-          h('div', { className: 'pl-subtitle' }, t('subtitle', { count: library.drafts.length }))),
-        h('button', {
-          type: 'button',
-          className: 'pl-iconButton',
-          'aria-label': t('close'),
-          title: t('close'),
-          onClick: closePanel,
-        }, h(IconCloseOutlineRegular, { size: 16 }))),
-      h(PromptEditor, { mode: 'panel', t, onInsert: writePrompt, localNotice }))
+      // The page follows the draft, so it keeps the id rather than the prompt.
+      const viewed = viewing === undefined ? undefined : library.drafts.find(item => item.id === viewing)
+      const panel = viewed === undefined
+        ? h('div', {
+          className: 'pl-card',
+          'data-dsh-plugin': 'prompt-library',
+          'data-dsh-part': 'dialog',
+        },
+        h('div', { className: 'pl-header' },
+          h('div', { className: 'pl-heading' },
+            h('h3', { className: 'pl-titleText' }, t('title')),
+            h('div', { className: 'pl-subtitle' }, t('subtitle', { count: library.drafts.length }))),
+          h('div', { className: 'pl-headerActions' },
+            h('button', {
+              type: 'button',
+              className: 'pl-iconButton',
+              'aria-label': t('close'),
+              title: t('close'),
+              onClick: closePanel,
+            }, h(IconCloseOutlineRegular, { size: 16 })))),
+        h(PromptEditor, { mode: 'panel', t, onPick: setViewing, localNotice }))
+        : h(PromptDetail, {
+          t,
+          prompt: viewed,
+          empty,
+          notice: localNotice,
+          onBack: () => { setLocalNotice(''); setViewing(undefined) },
+          onClose: closePanel,
+          onConfirm: () => { writePrompt(viewed) },
+        })
 
       const fallback = h('div', {
         className: 'pl-card',
