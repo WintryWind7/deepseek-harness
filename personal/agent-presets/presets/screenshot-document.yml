@@ -426,8 +426,6 @@ rows:
     config:
       customSkillDirs:
         - D:\why\deepseek-harness\personal\agent-presets\screenshot-document\skills
-  tool-ralph:
-    disabled: false
   tool-web:
     config:
       fetch: false

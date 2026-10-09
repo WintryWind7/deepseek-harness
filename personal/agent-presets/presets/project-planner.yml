@@ -128,8 +128,6 @@ rows:
   tool-jobs:
     config:
       completionDelivery: quiet
-  tool-ralph:
-    disabled: false
   tool-web:
     config:
       fetch: false

@@ -31,8 +31,6 @@ rows:
   tool-jobs:
     config:
       completionDelivery: quiet
-  tool-ralph:
-    disabled: false
   # 整行关掉，不再用 restrict：tool-web 在 web profile 默认 disabled，
   # 未注册的工具名会让 restrict 失败，令 team-dev 预设挂载失败。
   tool-web:
