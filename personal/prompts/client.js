@@ -28,6 +28,8 @@ window.__ModuleLoader__.load({
     const MAX_PROMPTS = 200
     const MAX_TITLE = 200
     const MAX_BODY = 100000
+    const MAX_TAIL = 20000
+    const TAILS_ROUTE = 'api/prompt.tails'
 
     const zh = {
       trigger: '提示词库',
@@ -51,6 +53,17 @@ window.__ModuleLoader__.load({
       invalid: '这条库无法保存。',
       save: '保存',
       unsaved: '{count} 处未保存的更改',
+      tabPrompts: '提示词',
+      tabTails: '系统尾注',
+      tailIntro: '追加在该预设系统提示词的最后。留空则不追加。保存后，已打开的会话从下一轮请求起生效。',
+      tailIntroPage: '追加在该预设系统提示词的最后。留空则不追加。保存后，已打开的会话从下一轮请求起生效。这一页不能写入输入框。',
+      tailCount: '{count} 个预设',
+      tailEmpty: '留空，不追加',
+      tailHidden: '这个预设使用完整人设，尾注不会出现。',
+      tailUnseen: '看不到',
+      tailBroken: '当前挂不上。',
+      tailTooLong: '一条尾注最长 20000 字。',
+      noPresets: '没有预设。',
       back: '返回',
       confirm: '确认',
       confirmEmpty: '确认后整段写入输入框，不会发送。',
@@ -95,6 +108,17 @@ window.__ModuleLoader__.load({
       invalid: 'This library could not be saved.',
       save: 'Save',
       unsaved: '{count} unsaved changes',
+      tabPrompts: 'Prompts',
+      tabTails: 'System tail',
+      tailIntro: 'Appended after that preset’s system prompt. Leave it empty to append nothing. An open session picks it up on its next request.',
+      tailIntroPage: 'Appended after that preset’s system prompt. Leave it empty to append nothing. An open session picks it up on its next request. This page does not write into the input.',
+      tailCount: '{count} presets',
+      tailEmpty: 'Empty, so nothing is appended',
+      tailHidden: 'This preset uses a complete persona, so the tail will not appear.',
+      tailUnseen: 'hidden',
+      tailBroken: 'This preset is not mounted.',
+      tailTooLong: 'A tail can be at most 20,000 characters.',
+      noPresets: 'No presets.',
       back: 'Back',
       confirm: 'Confirm',
       confirmEmpty: 'Writes the whole body into the empty input. Nothing is sent.',
@@ -227,6 +251,33 @@ window.__ModuleLoader__.load({
       .pl-error { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent); }
       .pl-status { color: var(--dsw-alias-label-secondary); }
       .pl-error .pl-ghost { margin-top: 6px; }
+      .pl-tabs { display: flex; gap: 4px; padding: 0 4px 12px; }
+      .pl-tab {
+        border: none; border-radius: 8px; padding: 4px 10px; background: transparent;
+        color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; cursor: pointer;
+      }
+      .pl-tab[aria-selected="true"] {
+        background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-weight: 500;
+      }
+      .pl-tab:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
+      .pl-editor-panel .pl-tailBox {
+        flex: 1 1 auto; min-height: 220px; max-height: min(52vh, 480px); overflow-y: auto;
+        display: flex; flex-direction: column; gap: 8px;
+      }
+      .pl-editor-page .pl-tailBox { display: flex; flex-direction: column; gap: 8px; }
+      .pl-tail {
+        display: flex; flex-direction: column; gap: 6px; min-width: 0;
+        border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; padding: 10px 12px;
+      }
+      .pl-tailHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+      .pl-tailId { flex: none; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+      .pl-tailDesc {
+        margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary);
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .pl-tailNote { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-state-error-primary); }
+      .pl-tail .pl-textarea { min-height: 72px; }
+      .pl-countError { color: var(--dsw-alias-state-error-primary); }
     `
 
     const listeners = new Set()
@@ -504,6 +555,205 @@ window.__ModuleLoader__.load({
       }
     }
 
+    const tailListeners = new Set()
+    let tailLoadSeq = 0
+    let tailSnapshot = {
+      status: 'idle',
+      error: '',
+      notice: '',
+      conflict: false,
+      saving: false,
+      revision: 0,
+      saved: [],
+      drafts: [],
+    }
+
+    function emitTails() {
+      for (const listener of tailListeners) listener()
+    }
+
+    function publishTails(next) {
+      tailSnapshot = next
+      emitTails()
+    }
+
+    function subscribeTails(listener) {
+      tailListeners.add(listener)
+      return () => { tailListeners.delete(listener) }
+    }
+
+    function useTails() {
+      return useSyncExternalStore(subscribeTails, () => tailSnapshot, () => tailSnapshot)
+    }
+
+    function countTailDirty(saved, drafts) {
+      const savedById = new Map(saved.map(item => [item.id, item.text]))
+      let count = 0
+      for (const draft of drafts) {
+        if ((savedById.get(draft.id) ?? '') !== draft.text) count += 1
+      }
+      return count
+    }
+
+    function tailsFrom(body) {
+      if (body === null || typeof body !== 'object' || body.ok !== true) return null
+      const value = body.value
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+      if (!Number.isSafeInteger(value.revision) || value.revision < 0 || !Array.isArray(value.presets)) return null
+      if (value.tails === null || typeof value.tails !== 'object' || Array.isArray(value.tails)) return null
+      const drafts = []
+      for (const item of value.presets) {
+        if (item === null || typeof item !== 'object' || Array.isArray(item) || typeof item.id !== 'string') return null
+        const stored = value.tails[item.id]
+        drafts.push({
+          id: item.id,
+          name: typeof item.name === 'string' ? item.name : '',
+          description: typeof item.description === 'string' ? item.description : '',
+          broken: typeof item.broken === 'string' ? item.broken : '',
+          hidden: item.hidden === true,
+          text: typeof stored === 'string' ? stored : '',
+        })
+      }
+      return { revision: value.revision, drafts }
+    }
+
+    function tailRows(drafts) {
+      return drafts.map(item => ({ ...item }))
+    }
+
+    async function startTailLoad() {
+      const seq = ++tailLoadSeq
+      const previous = tailSnapshot
+      publishTails({ ...previous, status: 'loading', error: '', notice: '', conflict: false })
+      try {
+        const response = await fetch(TAILS_ROUTE, { headers: { accept: 'application/json' } })
+        const body = await response.json()
+        if (seq !== tailLoadSeq) return
+        const value = tailsFrom(body)
+        if (value === null) {
+          const code = body && typeof body === 'object' && typeof body.error === 'string' ? body.error : 'loadFailed'
+          publishTails({ ...previous, status: previous.drafts.length > 0 ? 'ready' : 'error', error: code, saving: false })
+          return
+        }
+        const drafts = tailRows(value.drafts)
+        publishTails({
+          status: 'ready',
+          error: '',
+          notice: '',
+          conflict: false,
+          saving: false,
+          revision: value.revision,
+          saved: tailRows(drafts),
+          drafts,
+        })
+      } catch (error) {
+        if (seq !== tailLoadSeq) return
+        publishTails({
+          ...previous,
+          status: previous.drafts.length > 0 ? 'ready' : 'error',
+          error: 'unavailable',
+          saving: false,
+        })
+      }
+    }
+
+    async function refreshTails() {
+      if (tailSnapshot.saving || countTailDirty(tailSnapshot.saved, tailSnapshot.drafts) > 0) return
+      const seq = ++tailLoadSeq
+      let body
+      try {
+        body = await (await fetch(TAILS_ROUTE, { headers: { accept: 'application/json' } })).json()
+      } catch (error) {
+        return
+      }
+      if (seq !== tailLoadSeq) return
+      const value = tailsFrom(body)
+      if (value === null) return
+      const latest = tailSnapshot
+      if (latest.saving || countTailDirty(latest.saved, latest.drafts) > 0) return
+      const drafts = tailRows(value.drafts)
+      publishTails({
+        ...latest,
+        status: 'ready',
+        error: '',
+        notice: '',
+        conflict: false,
+        saving: false,
+        revision: value.revision,
+        saved: tailRows(drafts),
+        drafts,
+      })
+    }
+
+    function loadTails() {
+      if (tailSnapshot.status === 'loading') return
+      if (tailSnapshot.status === 'ready') {
+        void refreshTails()
+        return
+      }
+      void startTailLoad()
+    }
+
+    function reloadTails() {
+      if (tailSnapshot.saving) return
+      void startTailLoad()
+    }
+
+    function changeTail(id, text) {
+      if (tailSnapshot.saving || tailSnapshot.status !== 'ready') return
+      publishTails({
+        ...tailSnapshot,
+        error: '',
+        notice: '',
+        drafts: tailSnapshot.drafts.map(item => item.id === id ? { ...item, text } : item),
+      })
+    }
+
+    async function saveTails() {
+      const current = tailSnapshot
+      if (current.status !== 'ready' || current.saving || countTailDirty(current.saved, current.drafts) === 0) return
+      for (const row of current.drafts) {
+        if (row.text.trim().length > MAX_TAIL) {
+          publishTails({ ...current, error: 'tailTooLong', notice: '' })
+          return
+        }
+      }
+      const tails = {}
+      for (const row of current.drafts) tails[row.id] = row.text
+      publishTails({ ...current, saving: true, error: '', notice: '', conflict: false })
+      try {
+        const response = await fetch(TAILS_ROUTE, {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({ revision: current.revision, tails }),
+        })
+        const body = await response.json()
+        if (response.status === 409 || (body && body.error === 'conflict')) {
+          publishTails({ ...tailSnapshot, saving: false, conflict: true, error: 'conflict', notice: '' })
+          return
+        }
+        const value = tailsFrom(body)
+        if (!response.ok || value === null) {
+          const code = body && typeof body === 'object' && typeof body.error === 'string' ? body.error : 'saveFailed'
+          publishTails({ ...tailSnapshot, saving: false, error: code === 'conflict' ? 'conflict' : code, notice: '' })
+          return
+        }
+        const drafts = tailRows(value.drafts)
+        publishTails({
+          status: 'ready',
+          error: '',
+          notice: 'saved',
+          conflict: false,
+          saving: false,
+          revision: value.revision,
+          saved: tailRows(drafts),
+          drafts,
+        })
+      } catch (error) {
+        publishTails({ ...tailSnapshot, saving: false, error: 'unavailable', notice: '' })
+      }
+    }
+
     const toolbarIdle = { dirty: 0, disabled: true, save() {} }
     const toolbarStore = { current: toolbarIdle, listeners: new Set() }
 
@@ -746,6 +996,109 @@ window.__ModuleLoader__.load({
         }, t('confirm'))))
     }
 
+    function Tabs(props) {
+      const t = props.t
+      return h('div', { className: 'pl-tabs', role: 'tablist' },
+        h('button', {
+          type: 'button',
+          className: 'pl-tab',
+          role: 'tab',
+          'aria-selected': props.tab === 'prompts' ? 'true' : 'false',
+          onClick: () => { props.onTab('prompts') },
+        }, t('tabPrompts')),
+        h('button', {
+          type: 'button',
+          className: 'pl-tab',
+          role: 'tab',
+          'aria-selected': props.tab === 'tails' ? 'true' : 'false',
+          onClick: () => { props.onTab('tails') },
+        }, t('tabTails')))
+    }
+
+    function shortBroken(text) {
+      const line = text.replace(/\s+/g, ' ').trim()
+      if (line.length <= 160) return line
+      return `${line.slice(0, 160)}…`
+    }
+
+    /**
+     * One card per current preset. Empty text appends nothing. Saving this
+     * page does not write into the composer.
+     */
+    function TailEditor(props) {
+      const t = props.t
+      const tails = useTails()
+      const disabled = tails.status !== 'ready' || tails.saving
+      const dirty = countTailDirty(tails.saved, tails.drafts)
+      useEffect(() => { loadTails() }, [])
+
+      let body
+      if (tails.status === 'error' && tails.drafts.length === 0) {
+        body = h('div', { className: 'pl-empty' },
+          h('p', null, t(tails.error || 'loadFailed')),
+          h('button', { type: 'button', className: 'pl-ghost', onClick: () => { reloadTails() } }, t('retry')))
+      } else if (tails.status !== 'ready' && tails.drafts.length === 0) {
+        body = h('div', { className: 'pl-empty' }, t('loading'))
+      } else if (tails.drafts.length === 0) {
+        body = h('div', { className: 'pl-empty' }, t('noPresets'))
+      } else {
+        body = h('div', { className: 'pl-tailBox' }, tails.drafts.map(row => {
+          const over = row.text.trim().length > MAX_TAIL
+          const idLabel = row.hidden ? `${row.id} · ${t('tailUnseen')}` : row.id
+          return h('div', {
+            key: row.id,
+            className: 'pl-tail',
+            'data-dsh-plugin': 'prompt-library',
+            'data-dsh-part': 'tail',
+          },
+          h('div', { className: 'pl-tailHead' },
+            h('h3', { className: 'pl-titleText' }, row.name || row.id),
+            h('span', { className: 'pl-tailId' }, idLabel)),
+          row.description === '' ? null : h('p', { className: 'pl-tailDesc' }, row.description),
+          row.hidden ? h('p', { className: 'pl-tailNote' }, t('tailHidden')) : null,
+          row.broken === '' ? null : h('p', { className: 'pl-tailNote' }, `${t('tailBroken')} ${shortBroken(row.broken)}`),
+          h('textarea', {
+            className: 'pl-textarea',
+            value: row.text,
+            disabled,
+            'aria-label': row.name || row.id,
+            onChange: event => { changeTail(row.id, event.target.value) },
+          }),
+          h('span', { className: over ? 'pl-count pl-countError' : 'pl-count' }, row.text.length === 0
+            ? t('tailEmpty')
+            : t('chars', { count: row.text.length })))
+        }))
+      }
+
+      const notice = tails.drafts.length === 0 && tails.status === 'error'
+        ? null
+        : tails.error !== ''
+        ? h('div', { className: 'pl-error' }, t(tails.error),
+          tails.conflict ? h('div', null, h('button', {
+            type: 'button',
+            className: 'pl-ghost',
+            onClick: () => { reloadTails() },
+          }, t('reload'))) : null)
+        : tails.notice !== '' ? h('p', { className: 'pl-status' }, t(tails.notice)) : null
+
+      const footer = props.mode === 'panel'
+        ? h('div', { className: 'pl-footer' },
+          dirty > 0 ? h('span', { className: 'pl-dirty' }, t('unsaved', { count: dirty })) : null,
+          h('button', {
+            type: 'button',
+            className: 'pl-save',
+            disabled: disabled || dirty === 0,
+            onClick: () => { void saveTails() },
+          }, t('save')))
+        : null
+
+      return h('div', { className: props.mode === 'panel' ? 'pl-editor pl-editor-panel' : 'pl-editor pl-editor-page' },
+        props.mode === 'panel' ? h('p', { className: 'pl-hintLine' }, t('tailIntro')) : null,
+        notice,
+        body,
+        footer)
+    }
+
     function Toolbar(props) {
       const bar = useSyncExternalStore(subscribeToolbar, getToolbar, getToolbar)
       return h('div', { className: 'pl-toolbar' },
@@ -760,23 +1113,40 @@ window.__ModuleLoader__.load({
 
     function LibraryPage(props) {
       const library = useLibrary()
-      useEffect(() => { loadLibrary() }, [])
+      const tails = useTails()
+      const [tab, setTab] = useState('prompts')
+      useEffect(() => { loadLibrary(); loadTails() }, [])
       useEffect(() => {
+        if (tab === 'tails') {
+          const dirty = countTailDirty(tails.saved, tails.drafts)
+          publishToolbar({
+            dirty,
+            disabled: tails.status !== 'ready' || tails.saving || dirty === 0,
+            save() { void saveTails() },
+          })
+          return
+        }
         const dirty = countDirty(library.saved, library.drafts)
         publishToolbar({
           dirty,
           disabled: library.status !== 'ready' || library.saving || dirty === 0,
           save() { void saveLibrary() },
         })
-      }, [library])
+      }, [library, tails, tab])
       useEffect(() => () => { publishToolbar(toolbarIdle) }, [])
+      const intro = tab === 'tails' ? 'tailIntroPage' : 'intro'
+      const editor = tab === 'tails'
+        ? h(TailEditor, { mode: 'page', t: props.t })
+        : h(PromptEditor, { mode: 'page', t: props.t })
       return h('div', {
         className: 'pl-page',
         'data-dsh-plugin': 'prompt-library',
         'data-dsh-part': 'page',
       },
-      h('p', { className: 'ps-stickyTop pl-intro' }, props.t('intro')),
-      h(PromptEditor, { mode: 'page', t: props.t }))
+      h('div', { className: 'ps-stickyTop' },
+        h(Tabs, { tab, onTab: setTab, t: props.t }),
+        h('p', { className: 'pl-intro' }, props.t(intro))),
+      editor)
     }
 
     function PromptTrigger(props) {
@@ -784,15 +1154,18 @@ window.__ModuleLoader__.load({
       const phase = props.useInput(state => state.phase)
       const empty = props.useInput(state => state.draft.length === 0)
       const library = useLibrary()
+      const tails = useTails()
       const [open, setOpen] = useState(false)
       const [localNotice, setLocalNotice] = useState('')
       const [viewing, setViewing] = useState()
+      const [tab, setTab] = useState('prompts')
 
       const openPanel = () => {
         setLocalNotice('')
         setViewing(undefined)
         setOpen(true)
         loadLibrary()
+        loadTails()
       }
       const closePanel = () => {
         setOpen(false)
@@ -826,7 +1199,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'pl-header' },
           h('div', { className: 'pl-heading' },
             h('h3', { className: 'pl-titleText' }, t('title')),
-            h('div', { className: 'pl-subtitle' }, t('subtitle', { count: library.drafts.length }))),
+            h('div', { className: 'pl-subtitle' }, tab === 'tails'
+              ? t('tailCount', { count: tails.drafts.length })
+              : t('subtitle', { count: library.drafts.length }))),
           h('div', { className: 'pl-headerActions' },
             h('button', {
               type: 'button',
@@ -835,7 +1210,10 @@ window.__ModuleLoader__.load({
               title: t('close'),
               onClick: closePanel,
             }, h(IconCloseOutlineRegular, { size: 16 })))),
-        h(PromptEditor, { mode: 'panel', t, onPick: setViewing, localNotice }))
+        h(Tabs, { tab, onTab: setTab, t }),
+        tab === 'tails'
+          ? h(TailEditor, { mode: 'panel', t })
+          : h(PromptEditor, { mode: 'panel', t, onPick: setViewing, localNotice }))
         : h(PromptDetail, {
           t,
           prompt: viewed,
