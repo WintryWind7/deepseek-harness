@@ -74,8 +74,12 @@ export function apply(ctx) {
       action: { type: 'string', enum: ['add', 'remove'], description: 'add 纳入，remove 移出。' },
     }, ['session_id', 'action'], async (args, exec) => manager().manage(lead(exec), requiredText(args.session_id, 'session_id'), args.action, exec.signal),
     value => `${value.managed ? '已纳入管理' : '已移出管理'}：${value.sessionId}`),
-    tool('list_sessions', '列出可操作的根会话、管理归属、当前状态和最近回复预览，供选择或查看团队进展。', {
-      managed_only: { type: 'boolean', description: 'true 只列出你管理的会话；省略或 false 时列出所有普通根会话。' },
+    tool('list_sessions', '列出本工作目录下未归档的根会话：标题、管理归属与当前状态，按创建时间倒序。默认不含正文；用 session_ids 点名后，这些行才附带最近一轮正文预览。要看某一轮的完整正文用 read_session。', {
+      session_ids: {
+        type: 'array', items: { type: 'string' },
+        description: '要查看正文的会话 id，可给多个。命中的行附带最近一轮正文预览；不在本工作目录、已归档或不是根会话的 id 会出现在 missed 里。默认不传。',
+      },
+      managed_only: { type: 'boolean', description: 'true 只列出你管理的会话；省略或 false 时列出本工作目录下所有未归档根会话。' },
       offset: { type: 'integer', minimum: 0, description: '分页起点，默认 0。' },
       limit: { type: 'integer', minimum: 1, maximum: 100, description: '每页数量，默认 20。' },
     }, [], (args, exec) => manager().list(lead(exec), args, exec.signal)),

@@ -12,6 +12,17 @@ export function requiredText(value, label) {
   return value.trim()
 }
 
+/**
+ * 普通根会话的判据：不是 subagent，且它 live 时必须挂在 agents 的根表上。
+ * `list_sessions` 的可见性过滤与 `assertRoot` 共用这一份定义。
+ * @param {any} header @param {any} ctx @returns {boolean}
+ */
+export function isRoot(header, ctx) {
+  if (header.origin === 'subagent') return false
+  const live = ctx.agents.get(header.id)
+  return live === undefined || ctx.agents.roots().some(agent => agent.id === header.id)
+}
+
 /** @param {any} header @param {any} ctx */
 export function assertRoot(header, ctx) {
   if (header.origin === 'subagent') throw new Error('团队管理只接受普通根会话，不接受 subagent 会话')
@@ -19,6 +30,48 @@ export function assertRoot(header, ctx) {
   if (live !== undefined && !ctx.agents.roots().some(agent => agent.id === header.id)) {
     throw new Error(`会话 ${header.id} 不是根会话`)
   }
+}
+
+/**
+ * 团队可见性谓词：本工作目录、未归档，可选只保留某个 Lead 管理的会话。
+ * 根会话判定在 {@link isRoot}，这里只管可见范围。
+ * @param {any} header @param {{cwd: string, archived: ReadonlySet<string>, managedOnly?: boolean, managedLeadId?: string | null, leadId?: string}} view
+ * @returns {boolean}
+ */
+export function isVisibleRoot(header, view) {
+  if (header.cwd !== view.cwd) return false
+  if (view.archived.has(header.id)) return false
+  if (view.managedOnly === true && view.managedLeadId !== view.leadId) return false
+  return true
+}
+
+/**
+ * 会话标题在两处取值形状不一致（字符串与 SessionTitleSnapshot），统一成字符串。
+ * @param {any} value @returns {string | undefined}
+ */
+export function titleText(value) {
+  if (typeof value === 'string') return value
+  return typeof value?.title === 'string' ? value.title : undefined
+}
+
+/**
+ * 按固定并发跑一批异步任务，结果按输入顺序返回。面板要为每个可见会话读整份
+ * 日志，不限并发时目录里会话一多就会同时打开几百个读取。
+ * @template T, R
+ * @param {readonly T[]} items @param {number} limit @param {(item: T) => Promise<R>} run
+ * @returns {Promise<R[]>}
+ */
+export async function mapLimit(items, limit, run) {
+  const results = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index])
+    }
+  })
+  await Promise.all(workers)
+  return results
 }
 
 /** @param {any} ctx @param {any} agent @returns {string | undefined} */
