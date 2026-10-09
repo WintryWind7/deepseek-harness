@@ -62,7 +62,6 @@ window.__ModuleLoader__.load({
       kindUnstaged: '未暂存',
       kindConflicted: '冲突',
       truncated: '仅显示前 {count} 个文件。',
-      timeJustNow: '刚刚',
       timeMinutes: '{count} 分钟前',
       timeHours: '{count} 小时前',
       timeDays: '{count} 天前',
@@ -148,7 +147,6 @@ window.__ModuleLoader__.load({
       kindUnstaged: 'unstaged',
       kindConflicted: 'conflicted',
       truncated: 'Showing the first {count} files only.',
-      timeJustNow: 'just now',
       timeMinutes: '{count} min ago',
       timeHours: '{count} h ago',
       timeDays: '{count} d ago',
@@ -482,6 +480,15 @@ window.__ModuleLoader__.load({
     const GLYPH_KEYS = new Set(['node', 'merge', 'pass', 'gap']);
 
     /**
+     * Weekday names shown after a commit date, indexed by `getDay()`.
+     *
+     * English regardless of the interface language: the panel reports git
+     * data, and a weekday that changes with the UI language would make the
+     * same commit read differently in the two locales.
+     */
+    const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    /**
      * Normalize one response envelope into the value the panel renders.
      *
      * The panel crosses both a process boundary and a module generation to
@@ -598,18 +605,6 @@ window.__ModuleLoader__.load({
       return 'kind' + kind.charAt(0).toUpperCase() + kind.slice(1);
     }
 
-    /** GitHub-style relative time, falling back to a plain date past 30 days. */
-    function formatTime(seconds, t) {
-      const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - seconds);
-      if (elapsed < 60) return t('timeJustNow');
-      if (elapsed < 3600) return t('timeMinutes', { count: Math.floor(elapsed / 60) });
-      if (elapsed < 86400) return t('timeHours', { count: Math.floor(elapsed / 3600) });
-      if (elapsed < 2592000) return t('timeDays', { count: Math.floor(elapsed / 86400) });
-      const date = new Date(seconds * 1000);
-      const pad = value => String(value).padStart(2, '0');
-      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
-    }
-
     /** One uncommitted file row. */
     function ChangeRow(props) {
       const change = props.change;
@@ -667,12 +662,36 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /** Absolute local time for an opened commit. */
+    /**
+     * Absolute local time, to the second, with the weekday after the date.
+     * @param seconds - author time in seconds.
+     * @returns the display text.
+     */
     function formatAbsolute(seconds) {
       const date = new Date(seconds * 1000);
       const pad = value => String(value).padStart(2, '0');
       return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
-        + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+        + ' ' + WEEKDAY[date.getDay()]
+        + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+    }
+
+    /**
+     * Commit timestamp: the absolute local time, with the relative age in
+     * parentheses while it is still under 30 days.
+     * @param seconds - author time in seconds.
+     * @param t - the `git-panel` dictionary.
+     * @returns the display text.
+     */
+    function formatTime(seconds, t) {
+      const absolute = formatAbsolute(seconds);
+      const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - seconds);
+      if (elapsed >= 2_592_000) return absolute;
+      let relative;
+      if (elapsed < 60) relative = t('timeMinutes', { count: 1 });
+      else if (elapsed < 3_600) relative = t('timeMinutes', { count: Math.floor(elapsed / 60) });
+      else if (elapsed < 86_400) relative = t('timeHours', { count: Math.floor(elapsed / 3600) });
+      else relative = t('timeDays', { count: Math.floor(elapsed / 86_400) });
+      return absolute + ' (' + relative + ')';
     }
 
     /** `Name <email>`, or just the name when git recorded no email. */
