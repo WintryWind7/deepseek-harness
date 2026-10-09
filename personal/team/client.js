@@ -29,12 +29,24 @@ window.__ModuleLoader__.load({
       queryFailed: '团队会话读取失败，请重试',
       watchFailed: '实时更新已断开，可以手动刷新',
       noMembers: '这个工作目录下还没有根会话',
-      members: '{count} 个根会话',
+      members: '{count} 个成员',
+      roots: '{count} 个根会话',
+      noLead: '本工作区还没有 Lead',
+      leadIs: 'Lead：{title}',
+      addMember: '纳入管理',
+      removeMember: '移出管理',
+      becomeLead: '成为 Lead',
+      loseLead: '失去 Lead',
+      confirmTakeoverTitle: '替换 Lead',
+      confirmTakeoverBody: '当前团队已有 Lead：{title}。继续会让这个会话成为新的 Lead，现任名下的 {count} 个成员会全部转到它名下。',
+      confirmTakeoverOk: '替换 Lead',
+      cancel: '取消',
+      acting: '正在处理…',
+      actionFailed: '操作失败：{message}',
       preset: '预设',
       running: '运行中',
       waiting: '等待回答',
       idle: '空闲',
-      offline: '未运行',
       error: '运行出错',
       missing: '会话不可用',
       questions: '{count} 个待答问题',
@@ -65,12 +77,24 @@ window.__ModuleLoader__.load({
       queryFailed: 'Could not load team sessions. Try again',
       watchFailed: 'Live updates disconnected. You can refresh manually',
       noMembers: 'No root sessions in this working directory yet',
-      members: '{count} root sessions',
+      members: '{count} members',
+      roots: '{count} root sessions',
+      noLead: 'This working directory has no Lead yet',
+      leadIs: 'Lead: {title}',
+      addMember: 'Add to team',
+      removeMember: 'Remove from team',
+      becomeLead: 'Become Lead',
+      loseLead: 'Give up Lead',
+      confirmTakeoverTitle: 'Replace the Lead',
+      confirmTakeoverBody: 'This team already has a Lead: {title}. Continuing makes this session the new Lead, and all {count} members move to it.',
+      confirmTakeoverOk: 'Replace Lead',
+      cancel: 'Cancel',
+      acting: 'Working…',
+      actionFailed: 'Action failed: {message}',
       preset: 'Preset',
       running: 'Running',
       waiting: 'Waiting for answers',
       idle: 'Idle',
-      offline: 'Not running',
       error: 'Run failed',
       missing: 'Session unavailable',
       questions: '{count} pending questions',
@@ -93,6 +117,7 @@ window.__ModuleLoader__.load({
       .wt-panel { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary); font-size:13px; line-height:20px; }
       .wt-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px 8px; }
       .wt-heading { margin:0; font-size:14px; line-height:22px; font-weight:500; }
+      .wt-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; }
       .wt-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:28px; padding:3px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm); background:transparent; color:var(--dsw-alias-label-primary); font:inherit; cursor:pointer; }
       .wt-button:hover:not(:disabled) { background:var(--dsw-alias-bg-layer-2); }
       .wt-button:disabled { cursor:default; color:var(--dsw-alias-label-secondary); }
@@ -147,7 +172,14 @@ window.__ModuleLoader__.load({
     function readTeam(value) {
       if (!value || value.ok !== true || !Array.isArray(value.sessions)
         || (value.cwd !== null && typeof value.cwd !== 'string')) throw new Error('Invalid team response');
-      const statuses = ['running','waiting','idle','offline','error','missing'];
+      if (value.lead !== null && value.lead !== undefined
+        && (typeof value.lead !== 'object' || typeof value.lead.sessionId !== 'string' || typeof value.lead.title !== 'string')) {
+        throw new Error('Invalid team lead');
+      }
+      if (value.members !== undefined && (!Number.isInteger(value.members) || value.members < 0)) {
+        throw new Error('Invalid team member count');
+      }
+      const statuses = ['running','waiting','idle','error','missing'];
       for (const row of value.sessions) {
         if (!row || typeof row.sessionId !== 'string' || typeof row.title !== 'string'
           || typeof row.preset !== 'string' || !statuses.includes(row.status)
@@ -166,7 +198,7 @@ window.__ModuleLoader__.load({
      * 新通知在请求进行时合并为一次后续读取，不让旧响应覆盖新状态。
      */
     function createTeamSource(sessionId) {
-      let snapshot = { data:null, loading:false, failed:false, disconnected:false };
+      let snapshot = { data:null, loading:false, failed:false, disconnected:false, acting:null, actError:null };
       const listeners = new Set();
       const holders = new Set();
       let stream;
@@ -232,6 +264,32 @@ window.__ModuleLoader__.load({
           return () => { holders.delete(token); if (holders.size === 0) pause(); };
         },
         refresh() { watch(); return load(); },
+        /**
+         * 面板写操作。进行中与失败都折进同一个快照，面板复用现有订阅就能看到，
+         * 不需要另加一条管道。失败只改快照，不动列表里已有的数据。
+         * @param {string} target @param {string} action
+         */
+        async act(target, action) {
+          if (disposed) return;
+          publish({ acting: target, actError:null });
+          try {
+            const response = await fetch(ROUTE, {
+              method:'POST', credentials:'same-origin', cache:'no-store',
+              headers:{ accept:'application/json', 'content-type':'application/json' },
+              body: JSON.stringify({ sessionId, action, ...(target === undefined ? {} : { target }) }),
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok || body?.ok !== true) {
+              const message = typeof body?.error === 'string' ? body.error : ('HTTP ' + response.status);
+              if (!disposed) publish({ acting:null, actError:message });
+              return;
+            }
+            if (!disposed) publish({ acting:null, actError:null });
+            await load();
+          } catch (error) {
+            if (!disposed) publish({ acting:null, actError: error?.message ?? String(error) });
+          }
+        },
         dispose() { disposed = true; holders.clear(); pause(); listeners.clear(); },
       };
     }
@@ -241,7 +299,8 @@ window.__ModuleLoader__.load({
       return t(Object.hasOwn(keys, reason) ? keys[reason] : 'otherReason');
     }
 
-    function SessionRow({ row, openSession, t }) {
+    function SessionRow({ row, openSession, act, onBecomeLead, busy, t }) {
+      const acting = busy === row.sessionId;
       const turn = row.latestTurn;
       const message = turn == null ? row.latestMessage : null;
       const result = turn || message;
@@ -253,6 +312,14 @@ window.__ModuleLoader__.load({
           row.pendingQuestions > 0 && h('span', { className:'wt-own' }, t('questions', { count:row.pendingQuestions }))),
         h('div', { className:'wt-meta' },
           h('span', { className:'wt-preset' }, h('span', null, t('preset')), h('span', null, row.preset))),
+        h('div', { className:'wt-actions' },
+          row.isLead
+            ? h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => act(row.sessionId, 'lose-lead') }, t('loseLead'))
+            : row.managed
+              ? h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => act(row.sessionId, 'remove') }, t('removeMember'))
+              : h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => act(row.sessionId, 'add') }, t('addMember')),
+          row.canBeLead && h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => onBecomeLead(row.sessionId, row.title) }, t('becomeLead')),
+          acting && h('span', { className:'wt-note' }, t('acting'))),
         result == null ? h('p', { className:'wt-note' }, t('noResult')) :
           h('details', { className:'wt-result' },
             h('summary', null, turn != null
@@ -264,16 +331,23 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 面板正文：当前工作目录下的根会话列表。样式与标题由调用方提供，
-     * 这里只负责状态、失败提示和列表本身。
+     * 面板正文：当前工作目录下的根会话列表，加上团队摘要与每行的管理按钮。
+     * 样式与标题由调用方提供，这里负责状态、失败提示、摘要、列表与接管确认。
      */
-    function TeamBody({ query, refreshTeam, openSession, t }) {
+    function TeamBody({ query, refreshTeam, openSession, act, t }) {
       const data = query.data;
+      const [pending, setPending] = useState(null);
+      const askBecomeLead = (id, title) => {
+        // 已有 Lead 时先确认：接管会把现任名下的成员全部转过来。
+        if (data != null && data.lead != null) setPending({ id, title });
+        else act(id, 'become-lead');
+      };
       return h('div', { className:'wt-body', 'aria-busy':query.loading },
         query.failed && h('div', { className:'wt-notice', 'data-error':true, role:'alert' },
           h('span', null, t('queryFailed')),
           h('button', { type:'button', className:'wt-button', disabled:query.loading, onClick:refreshTeam }, t('retry'))),
         query.disconnected && !query.failed && h('p', { className:'wt-notice', role:'status' }, t('watchFailed')),
+        query.actError != null && h('p', { className:'wt-notice', role:'status', 'data-error':true }, t('actionFailed', { message:query.actError })),
         data == null && query.loading && h('div', { role:'status', 'aria-label':t('loading') },
           [0,1,2].map(key => h('div', { key, className:'wt-skeleton', 'aria-hidden':true }))),
         data != null && h(React.Fragment, null,
@@ -283,12 +357,26 @@ window.__ModuleLoader__.load({
               h('div', { className:'wt-lead' },
                 h('span', { className:'wt-caption' }, t('workspace')),
                 h('span', { className:'wt-caption' }, data.cwd),
-                h('span', { className:'wt-caption' }, t('members', { count:data.sessions.length }))),
+                h('span', { className:'wt-caption' }, data.lead == null ? t('noLead') : t('leadIs', { title:data.lead.title })),
+                h('span', { className:'wt-caption' }, t('members', { count:data.members ?? 0 })),
+                h('span', { className:'wt-caption' }, t('roots', { count:data.sessions.length }))),
               data.sessions.length === 0 ? h('p', { className:'wt-empty' }, t('noMembers')) :
-                h('ul', { className:'wt-list' }, data.sessions.map(row => h(SessionRow, { key:row.sessionId, row, openSession, t }))))));
+                h('ul', { className:'wt-list' }, data.sessions.map(row => h(SessionRow, {
+                  key:row.sessionId, row, openSession, act, busy:query.acting, onBecomeLead:askBecomeLead, t,
+                })))),
+          pending !== null && h('div', { className:'wt-overlay', role:'dialog', 'aria-modal':true, 'aria-label':t('confirmTakeoverTitle'), 'data-dsh-part':'dialog' },
+            h('div', { className:'wt-card wt-dialog' },
+              h('div', { className:'wt-head' }, h('h2', { className:'wt-heading' }, t('confirmTakeoverTitle'))),
+              h('p', null, t('confirmTakeoverBody', { title:(data.lead == null ? '' : data.lead.title), count:data.members ?? 0 })),
+              h('div', { className:'wt-actions' },
+                h('button', {
+                  type:'button', className:'wt-button',
+                  onClick:() => { const id = pending.id; setPending(null); act(id, 'become-lead'); },
+                }, t('confirmTakeoverOk')),
+                h('button', { type:'button', className:'wt-button', onClick:() => setPending(null) }, t('cancel')))))));
     }
 
-    function TeamPanel({ sessionId, useTeam, useTabInfo, retainTeam, refreshTeam, openSession, t }) {
+    function TeamPanel({ sessionId, useTeam, useTabInfo, retainTeam, refreshTeam, openSession, act, t }) {
       const query = useTeam();
       const info = useTabInfo();
       useEffect(() => info.tab.visible ? retainTeam() : undefined, [sessionId, info.tab.visible, retainTeam]);
@@ -298,7 +386,7 @@ window.__ModuleLoader__.load({
         h('header', { className:'wt-head' },
           h('h2', { className:'wt-heading' }, t('title')),
           h('button', { type:'button', className:'wt-button', disabled:query.loading, onClick:refreshTeam }, t('refresh'))),
-        h(TeamBody, { query, refreshTeam, openSession, t }));
+        h(TeamBody, { query, refreshTeam, openSession, act, t }));
     }
 
     /**
@@ -321,6 +409,7 @@ window.__ModuleLoader__.load({
         useTabInfo: () => ({ tab: { visible: true, actions: {} } }),
         retainTeam: () => () => {},
         refreshTeam: () => holder?.refresh(),
+        act: (target, action) => holder?.act(target, action),
         openSession,
         t,
       });
@@ -404,6 +493,7 @@ window.__ModuleLoader__.load({
             hooks:{ team:source.source },
             retainTeam:source.retain,
             refreshTeam:source.refresh,
+            act:source.act,
             openSession,
           };
         };

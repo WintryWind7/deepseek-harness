@@ -1,8 +1,9 @@
-/** 团队管理的 Host：管理关系、轮次结果投递和只读面板共用同一个实例。 */
+/** 团队管理的 Host：管理关系、轮次结果投递和面板共用同一个实例。 */
 import { randomUUID } from 'node:crypto'
 import {
-  assertRoot, hasReceipt, isRoot, isVisibleRoot, latestMessage, mapLimit, observe, presetIdOf,
-  readRecords, readStored, requiredText, restoredModel, titleText, turnResult, updateRecord, userMessage,
+  adoptMembers, assertRoot, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
+  observe, presetIdOf, readRecords, readStored, requiredText, restoredModel, titleText, turnResult,
+  updateLead, updateRecord, userMessage, writeTeam,
 } from './runtime.js'
 import { createQuestions } from './questions.js'
 
@@ -43,9 +44,15 @@ export function getManager(ctx) {
   return manager
 }
 
-/** @param {any} ctx @param {{resultChars: number, questionHistoryLimit: number}} config @returns {any} */
-function createManager(ctx, config) {
+/**
+ * 建一个管理实例。导出是为了让测试能用最小的假 ctx 在进程内驱动它：接管询问、
+ * 归属转移、面板写操作这些路径都要真实走一遍，而不是只测纯函数。
+ * @param {any} ctx @param {{resultChars: number, questionHistoryLimit: number}} config @returns {any}
+ */
+export function createManager(ctx, config) {
   const records = new Map()
+  /** 本工作区登记在册的 Lead：cwd → 会话 id。一个工作区只保留一个。 */
+  const leads = new Map()
   const errors = new Map()
   const jobs = new Set()
   const deliveries = new Map()
@@ -79,12 +86,104 @@ function createManager(ctx, config) {
   const persisted = row => ({ leadId: row.leadId, preset: row.preset, afterSeq: row.afterSeq, generation: row.generation, leadReceiptFloor: row.leadReceiptFloor })
   const save = (id, row) => { updateRecord(row.cwd, id, persisted(row)); records.set(id, row) }
 
-  const assertLead = lead => {
+  /** 归档的会话不再算数：登记的 Lead 一旦归档，这个工作区的槽位就空出来给人接管。 */
+  const isArchived = id => (ctx.get('workspaceRegistry')?.archivedSessionIds ?? []).includes(id)
+  const membersOf = leadId => [...records.values()].filter(row => row.leadId === leadId).length
+
+  /** 能不能当 Lead：根会话、预设、不是受管理工作会话。与"是否已登记"无关。 */
+  const assertCandidate = lead => {
     if (!lead) throw new Error('这个工具需要调用它的 Lead 会话')
     assertRoot(lead.session.header, ctx)
     if (presetIdOf(ctx, lead) !== 'team-dev') throw new Error('这个工具只由团队开发助手 Lead 调用')
     if (records.has(lead.id)) throw new Error('受管理工作会话不能再充当 Lead')
     return lead
+  }
+
+  /** 要求调用者就是本工作区登记在册的 Lead；未登记时六个工具全部报错并指向 become_lead。 */
+  const assertLead = lead => {
+    assertCandidate(lead)
+    const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+    if (isArchived(lead.id) || leads.get(cwd) !== lead.id) {
+      throw new Error(`这个会话不是本工作区（${cwd}）的 Lead；请先调用 become_lead 成为 Lead`)
+    }
+    return lead
+  }
+
+  /**
+   * 当前仍可用的会话语料与 id 集合（排除已归档）。一次列举同时供槽位判定与面板使用，
+   * 避免一次面板加载做两遍全局列举。
+   * @param {AbortSignal | undefined} signal
+   */
+  const usableSessions = async signal => {
+    const corpus = await ctx.sessionQuery.listSessions(signalFor(signal))
+    const archived = new Set(ctx.get('workspaceRegistry')?.archivedSessionIds ?? [])
+    return { corpus, ids: corpus.filter(row => !archived.has(row.header.id)).map(row => row.header.id) }
+  }
+
+  /**
+   * 落盘核心：把槽位与成员一次交给 leadId。`expected` 是决定接管之前观察到的槽位；
+   * 复查发现它变了就整体失败 —— 用户同意的是"替换那一个"，不是"替换任何一个"。
+   * 这里到写盘之间没有任何 await，两个并发接管只有一个能落盘。
+   * @param {string} cwd @param {string} leadId @param {readonly string[]} ids @param {string | undefined} expected
+   * @returns {{replaced: string | null}}
+   */
+  const seatLead = (cwd, leadId, ids, expected) => {
+    const snapshot = readRecords(cwd)
+    const incumbent = liveLeadId(snapshot.leadId, ids)
+    if (incumbent !== expected) {
+      throw new Error(`本工作区的 Lead 槽位已经变了（现在是 ${incumbent ?? '空'}）；本次接管未生效，请重新决定`)
+    }
+    const sessions = adoptMembers(snapshot.sessions, leadId)
+    for (const [id, row] of Object.entries(sessions)) {
+      const known = records.get(id)
+      if (known !== undefined && row.leadId === leadId) records.set(id, { ...known, ...row })
+    }
+    writeTeam(cwd, { leadId, sessions })
+    leads.set(cwd, leadId)
+    changed()
+    return { replaced: incumbent ?? null }
+  }
+
+  /**
+   * 工具入口：模型驱动，所以接管必须先问用户。用户取消或拒绝都不改任何东西。
+   * @param {any} lead @param {{takeover?: boolean}} args @param {AbortSignal | undefined} signal
+   */
+  const becomeLead = async (lead, args = {}, signal) => {
+    assertCandidate(lead)
+    const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+    const ids = (await usableSessions(signal)).ids
+    const incumbent = liveLeadId(readRecords(cwd).leadId, ids)
+    if (incumbent === lead.id) return { sessionId: lead.id, members: membersOf(lead.id), replaced: null }
+    if (incumbent !== undefined && args.takeover !== true) {
+      const title = (await titlesOf([incumbent], signal)).get(incumbent) ?? incumbent
+      throw new Error(`本工作区已有 Lead ${incumbent}（${title}）；要替换它请再次调用并带 takeover: true，届时会先询问用户`)
+    }
+    if (incumbent !== undefined) {
+      const interaction = ctx.get('userQuestions')
+      if (interaction === undefined) throw new Error('没有可用的用户问答通道，无法确认替换 Lead')
+      const APPROVE = '替换 Lead'
+      try {
+        const answer = await interaction.ask({
+          agent: lead, signal: signalFor(signal),
+          questions: [{
+            id: 'team-takeover',
+            header: '替换 Lead',
+            question: '当前团队已有 Lead。继续会让这个会话成为新的 Lead，是否替换？',
+            detail: `现任 Lead：${incumbent}\n替换后，它名下 ${membersOf(incumbent)} 个成员会全部转到这个会话名下。`,
+            options: [
+              { label: APPROVE, description: '这个会话成为本工作区新的 Lead，并接管现有成员。' },
+              { label: '保持现状', description: '什么都不改，现任 Lead 继续。' },
+            ],
+          }],
+        })
+        const row = (answer?.answers ?? []).find(entry => entry.id === 'team-takeover')
+        if (!(row?.selected ?? []).includes(APPROVE)) throw new Error('用户选择保持现状')
+      } catch (error) {
+        throw new Error(`没有取得用户同意，本工作区保持原状：${error?.message ?? error}`)
+      }
+    }
+    const { replaced } = seatLead(cwd, lead.id, ids, incumbent)
+    return { sessionId: lead.id, members: membersOf(lead.id), replaced }
   }
 
   const ensureAgent = async (id, signal) => {
@@ -112,12 +211,14 @@ function createManager(ctx, config) {
     // raw 是调用方已经读到的原始日志，避免同一份日志读两遍。
     const events = raw ?? (snapshot.source === 'prepared' ? (await readStored(ctx, id, signalFor(signal))).events : snapshot.events)
     const row = records.get(id)
+    const pending = live ? questions?.count(id) ?? 0 : 0
     return {
       sessionId: id, title: snapshot.projections.title ?? id,
       preset: snapshot.projections.agentPreset ?? snapshot.header.agentPreset ?? '',
       cwd: snapshot.header.cwd ?? null, managed: Boolean(row), leadId: row?.leadId ?? null,
-      status: (live ? questions?.count(id) ?? 0 : 0) ? 'waiting' : live ? live.status === 'running' ? 'running' : 'idle' : 'offline',
-      pendingQuestions: live ? questions?.count(id) ?? 0 : 0,
+      // 状态只表达任务状态：没载入本进程的会话，与载入后当下没事做的会话，对用户是同一件事。
+      status: pending > 0 ? 'waiting' : live?.status === 'running' ? 'running' : 'idle',
+      pendingQuestions: pending,
       latestTurn: turnResult(events, chars),
       latestMessage: latestMessage(events, chars), deliveryError: errors.get(id) ?? null,
     }
@@ -167,7 +268,7 @@ function createManager(ctx, config) {
       sessionId: id, title: title ?? id,
       preset: record.header.agentPreset ?? '',
       cwd: record.header.cwd ?? null, managed: Boolean(row), leadId: row?.leadId ?? null,
-      status: pending > 0 ? 'waiting' : live ? live.status === 'running' ? 'running' : 'idle' : 'offline',
+      status: pending > 0 ? 'waiting' : live?.status === 'running' ? 'running' : 'idle',
       pendingQuestions: pending, deliveryError: errors.get(id) ?? null,
     }
   }
@@ -250,21 +351,88 @@ function createManager(ctx, config) {
     track(operation).then(() => { if (deliveries.get(id) === operation) deliveries.delete(id) })
   }
 
+  /** 读槽位：登记在册且仍然存在的 Lead。 */
+  const leadIdOf = (cwd, ids) => liveLeadId(readRecords(cwd).leadId, ids)
+
+  /** 移出一个成员。expectedLead 给出时要求归属匹配；面板移出孤儿成员时传 undefined。 */
+  const removeMember = (cwd, id, expectedLead) => {
+    const previous = records.get(id)
+    if (!previous) throw new Error(`会话 ${id} 不在管理范围`)
+    if (expectedLead !== undefined && previous.leadId !== expectedLead) {
+      throw new Error(`会话 ${id} 不在这个 Lead 的管理范围`)
+    }
+    updateRecord(previous.cwd, id, undefined)
+    records.delete(id)
+    errors.delete(id)
+    questions.release(id)
+    changed()
+    return { sessionId: id, managed: false }
+  }
+
+  /**
+   * 把一个根会话纳入 leadId 名下。lead 给出时（工具路径）额外做 Lead 身份复查；
+   * 面板路径的操作者是人，只校验 cwd 与槽位没变。
+   * @param {string} leadId @param {string} cwd @param {string} id @param {AbortSignal | undefined} signal @param {any} [lead]
+   */
+  const seatMember = async (leadId, cwd, id, signal, lead) => {
+    const previous = records.get(id)
+    if (previous) {
+      if (previous.leadId !== leadId) throw new Error(`会话 ${id} 已经在团队里（归属 ${previous.leadId}）；先移出再纳入`)
+      return { sessionId: id, managed: true }
+    }
+    if ([...records.values()].some(row => row.leadId === id)) throw new Error('已经管理其他会话的 Lead 不能成为工作会话')
+    await observe(ctx, id, signalFor(signal), async snapshot => {
+      assertRoot(snapshot.header, ctx)
+      // 一个工作区一个 Lead：跨工作目录纳入的成员既不在列表里也不在面板里，只能靠 id 移出。
+      if (snapshot.header.cwd !== cwd) {
+        throw new Error(`会话 ${id} 的工作目录是 ${snapshot.header.cwd ?? '（无）'}，不在本工作区 ${cwd}；不能纳入`)
+      }
+      const stored = snapshot.source === 'live' ? null : await readStored(ctx, id, signalFor(signal))
+      const live = ctx.sessions.get(id)
+      const afterSeq = live ? live.seq - 1 : stored?.events.at(-1)?.seq ?? -1
+      const owner = lead ?? ctx.agents.get(leadId)
+      if (owner && !await ctx.sessions.flush(owner.session)) throw new Error('Lead 的管理操作未能持久化')
+      // 权属校验与写入之间没有 await，避免多个 Lead 同时抢入同一会话。
+      if (lead) assertLead(lead)
+      const current = records.get(id)
+      if (current) {
+        if (current.leadId !== leadId) throw new Error(`会话 ${id} 已由 Lead ${current.leadId} 管理`)
+        return
+      }
+      if (leads.get(cwd) !== leadId) throw new Error(`本工作区（${cwd}）的 Lead 已经变了；请重新决定`)
+      if ([...records.values()].some(row => row.leadId === id)) throw new Error('已经管理其他会话的 Lead 不能成为工作会话')
+      save(id, {
+        leadId, preset: snapshot.projections.agentPreset ?? snapshot.header.agentPreset ?? '',
+        afterSeq, leadReceiptFloor: owner?.session.seq ?? 0, generation: randomUUID(), cwd,
+      })
+    })
+    questions.adopt(id, records.get(id))
+    queue(id)
+    changed()
+    return { sessionId: id, managed: true }
+  }
+
   const manager = {
-    config, track, changed, assertLead, ensureAgent,
+    config, track, changed, assertLead, becomeLead, ensureAgent,
     owner: id => records.get(id),
     async load() {
       const corpus = await ctx.sessionQuery.listSessions(shutdown.signal)
+      const archived = new Set(ctx.get('workspaceRegistry')?.archivedSessionIds ?? [])
+      // 已归档的不再算数：登记的 Lead 一旦归档，这个工作区的槽位就空出来给人接管。
+      const usable = corpus.filter(row => !archived.has(row.header.id)).map(row => row.header.id)
       const directories = new Set(corpus.map(row => row.header.cwd).filter(Boolean))
       for (const cwd of directories) {
         shutdown.signal.throwIfAborted()
-        for (const [id, record] of Object.entries(readRecords(cwd))) {
+        const stored = readRecords(cwd)
+        const lead = liveLeadId(stored.leadId, usable)
+        if (lead !== undefined) leads.set(cwd, lead)
+        for (const [id, record] of Object.entries(stored.sessions)) {
           if (records.has(id)) throw new Error(`会话 ${id} 有重复的团队管理记录`)
           let afterSeq = record.afterSeq
           if (afterSeq === undefined) {
             // 旧记录只建立新的投递起点，不重发纳入管理前的历史轮次。
-            const stored = await readStored(ctx, id, shutdown.signal)
-            afterSeq = stored.events.at(-1)?.seq ?? -1
+            const log = await readStored(ctx, id, shutdown.signal)
+            afterSeq = log.events.at(-1)?.seq ?? -1
           }
           shutdown.signal.throwIfAborted()
           const row = { ...record, afterSeq, generation: record.generation ?? randomUUID(), leadReceiptFloor: record.leadReceiptFloor ?? 0, cwd }
@@ -280,45 +448,50 @@ function createManager(ctx, config) {
     },
     async manage(lead, id, action, signal) {
       assertLead(lead)
-      const previous = records.get(id)
-      if (action === 'remove') {
-        if (!previous || previous.leadId !== lead.id) throw new Error(`会话 ${id} 不在这个 Lead 的管理范围`)
-        updateRecord(previous.cwd, id, undefined)
-        records.delete(id)
-        errors.delete(id)
-        questions.release(id)
-        changed()
-        return { sessionId: id, managed: false }
-      }
+      const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+      if (action === 'remove') return removeMember(cwd, id, lead.id)
       if (action !== 'add') throw new Error('action 必须是 add 或 remove')
       if (id === lead.id) throw new Error('Lead 不能把自己纳入工作会话')
-      if (previous && previous.leadId !== lead.id) throw new Error(`会话 ${id} 已由 Lead ${previous.leadId} 管理；需先从原 Lead 移出`)
-      if ([...records.values()].some(row => row.leadId === id)) throw new Error('已经管理其他会话的 Lead 不能成为工作会话')
-      if (!previous) {
-        await observe(ctx, id, signalFor(signal), async snapshot => {
-          assertRoot(snapshot.header, ctx)
-          const stored = snapshot.source === 'live' ? null : await readStored(ctx, id, signalFor(signal))
-          const live = ctx.sessions.get(id)
-          const afterSeq = live ? live.seq - 1 : stored?.events.at(-1)?.seq ?? -1
-          const leadReceiptFloor = lead.session.seq
-          if (!await ctx.sessions.flush(lead.session)) throw new Error('Lead 的管理操作未能持久化')
-          // 权属校验与写入之间没有 await，避免多个 Lead 同时抢入同一会话。
-          assertLead(lead)
-          const current = records.get(id)
-          if (current && current.leadId !== lead.id) throw new Error(`会话 ${id} 已由 Lead ${current.leadId} 管理`)
-          if ([...records.values()].some(row => row.leadId === id)) throw new Error('已经管理其他会话的 Lead 不能成为工作会话')
-          if (current) return
-          const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
-          save(id, {
-            leadId: lead.id, preset: snapshot.projections.agentPreset ?? snapshot.header.agentPreset ?? '',
-            afterSeq, leadReceiptFloor, generation: randomUUID(), cwd,
-          })
-        })
+      return seatMember(lead.id, cwd, id, signal, lead)
+    },
+    /**
+     * 面板写操作。操作者是人不是 Lead，所以不走 assertLead；cwd、根会话、一个工作区
+     * 一个 Lead、成员互斥这些不变式照旧强制。接管由用户在界面上确认，不再走服务端弹问
+     * —— 打开面板的会话可能是冷的，而 userQuestions.ask 要求精确的 live 根 agent。
+     * @param {string} viewedId @param {string} action @param {string | undefined} targetId @param {AbortSignal | undefined} signal
+     */
+    async panelAct(viewedId, action, targetId, signal) {
+      const viewed = await observe(ctx, viewedId, signalFor(signal), snapshot => snapshot)
+      const cwd = requiredText(viewed.header.cwd, '面板会话工作目录')
+      const ids = (await usableSessions(signal)).ids
+      const seated = leadIdOf(cwd, ids)
+      if (action === 'lose-lead') {
+        if (seated === undefined) throw new Error('本工作区还没有 Lead')
+        if (targetId !== seated) throw new Error(`会话 ${targetId} 不是本工作区的 Lead（现任 ${seated}）`)
+        const members = membersOf(seated)
+        updateLead(cwd, undefined)
+        leads.delete(cwd)
+        changed()
+        return { action, leadId: null, members }
       }
-      questions.adopt(id, records.get(id))
-      queue(id)
-      changed()
-      return { sessionId: id, managed: true }
+      const target = await observe(ctx, targetId, signalFor(signal), snapshot => snapshot)
+      assertRoot(target.header, ctx)
+      if (target.header.cwd !== cwd) throw new Error('只能操作本工作目录下的根会话')
+      if (action === 'become-lead') {
+        if (target.header.agentPreset !== 'team-dev') {
+          throw new Error(`会话 ${targetId} 的预设是 ${target.header.agentPreset ?? '（无）'}，只有团队开发助手会话能当 Lead`)
+        }
+        if (records.has(targetId)) throw new Error(`会话 ${targetId} 是受管理工作会话，不能再充当 Lead`)
+        const { replaced } = seatLead(cwd, targetId, ids, seated)
+        return { action, leadId: targetId, replaced, members: membersOf(targetId) }
+      }
+      if (action === 'add') {
+        if (seated === undefined) throw new Error('本工作区还没有 Lead；先让某个团队开发助手会话成为 Lead')
+        if (targetId === seated) throw new Error('Lead 不能把自己纳入工作会话')
+        return { action, ...(await seatMember(seated, cwd, targetId, signal)) }
+      }
+      if (action === 'remove') return { action, ...removeMember(cwd, targetId, undefined) }
+      throw new Error(`未知的面板操作：${action}`)
     },
     async list(lead, args = {}, signal) {
       assertLead(lead)
@@ -382,22 +555,37 @@ function createManager(ctx, config) {
       // 面板不做 Lead 过滤：任何会话打开都看到同一工作目录下未归档的根会话。
       const viewed = await describe(sessionId, signal, 240)
       const cwd = viewed.cwd
-      if (cwd === null) return { ok: true, cwd: null, sessions: [] }
-      const corpus = await ctx.sessionQuery.listSessions(signalFor(signal))
+      if (cwd === null) return { ok: true, cwd: null, lead: null, members: 0, canManage: false, sessions: [] }
+      const { corpus, ids } = await usableSessions(signal)
+      const lead = leadIdOf(cwd, ids)
+      const leadTitle = lead === undefined ? null : (await titlesOf([lead], signal)).get(lead) ?? lead
       const visible = visibleRoots(corpus, cwd, false, undefined)
+      // 只有团队开发助手会话能当 Lead；受管理工作会话不行。
+      const flags = row => ({
+        managed: records.has(row.header.id),
+        isLead: row.header.id === lead,
+        canBeLead: row.header.id !== lead && !records.has(row.header.id) && row.header.agentPreset === 'team-dev',
+      })
       const sessions = await mapLimit(visible, SESSION_READ_CONCURRENCY, async row => {
         try {
           // managed 只表示在某个 Lead 的管理范围，不限制面板可见性。
-          return { ...(await describe(row.header.id, signal)), managed: records.has(row.header.id) }
+          return { ...(await describe(row.header.id, signal)), ...flags(row) }
         } catch (error) {
           return {
             sessionId: row.header.id, title: row.header.id, preset: row.header.agentPreset ?? '',
-            managed: records.has(row.header.id), status: 'missing', pendingQuestions: 0,
-            latestTurn: null, latestMessage: null,
+            status: 'missing', pendingQuestions: 0, latestTurn: null, latestMessage: null,
+            ...flags(row),
           }
         }
       })
-      return { ok: true, cwd, sessions }
+      return {
+        ok: true, cwd,
+        lead: lead === undefined ? null : { sessionId: lead, title: leadTitle },
+        // 成员数按本工作目录的记录数算：归属已消失 Lead 的孤儿成员也算在团队里。
+        members: [...records.values()].filter(row => row.cwd === cwd).length,
+        canManage: lead !== undefined,
+        sessions,
+      }
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     onEvent(session, event) {
@@ -481,11 +669,28 @@ export async function apply(ctx, config) {
       ctx.on('agent/disposed', () => manager.changed()),
       ctx.on('agent/status', () => manager.changed()),
       ctx.connection.fetch.register({
-        path: PANEL_PATH, methods: ['GET'], requestBody: 'buffered',
+        path: PANEL_PATH, methods: ['GET', 'POST'], requestBody: 'buffered',
         async fetch(request) {
           const url = new URL(request.url)
           const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
           try {
+            if (request.method === 'POST') {
+              let body
+              try {
+                const text = await request.text()
+                if (text.length > 4000) throw new Error('请求体过大')
+                body = JSON.parse(text)
+              } catch (error) {
+                throw new Error(`面板写请求不是合法 JSON：${error?.message ?? error}`)
+              }
+              const sessionId = requiredText(body?.sessionId, 'sessionId')
+              const action = requiredText(body?.action, 'action')
+              const target = body?.target === undefined ? undefined : requiredText(body.target, 'target')
+              return new Response(
+                JSON.stringify({ ok: true, ...(await manager.panelAct(sessionId, action, target, request.signal)) }),
+                { headers },
+              )
+            }
             const id = requiredText(url.searchParams.get('sessionId'), 'sessionId')
             if (url.searchParams.get('watch') === '1') return watch(manager, request)
             return new Response(JSON.stringify(await manager.panel(id, request.signal)), { headers })

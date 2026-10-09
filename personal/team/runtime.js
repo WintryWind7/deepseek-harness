@@ -105,17 +105,24 @@ export function userMessage(text, id = randomUUID(), source = { kind: 'user' }) 
 /** @param {string} cwd @returns {string} */
 export function recordPath(cwd) { return join(cwd, '.dsh', RECORD_FILE) }
 
-/** @param {string} cwd @returns {Record<string, any>} */
+/**
+ * 整份读入：`{ leadId, sessions }`。文件不存在或没有登记时 `leadId` 为 undefined。
+ * @param {string} cwd @returns {{leadId: string | undefined, sessions: Record<string, any>}}
+ */
 export function readRecords(cwd) {
   let text
   try { text = readFileSync(recordPath(cwd), 'utf8') } catch (error) {
-    if (error?.code === 'ENOENT') return {}
+    if (error?.code === 'ENOENT') return { leadId: undefined, sessions: {} }
     throw error
   }
   const parsed = JSON.parse(text)
   const sessions = parsed?.sessions
   if (sessions === null || typeof sessions !== 'object' || Array.isArray(sessions)) {
     throw new Error(`${recordPath(cwd)} 缺少 sessions 记录`)
+  }
+  const storedLead = parsed.leadId
+  if (storedLead !== undefined && storedLead !== null && (typeof storedLead !== 'string' || storedLead === '')) {
+    throw new Error(`${recordPath(cwd)} 的 leadId 无效`)
   }
   for (const [id, row] of Object.entries(sessions)) {
     if (row === null || typeof row !== 'object' || Array.isArray(row)
@@ -132,19 +139,64 @@ export function readRecords(cwd) {
       throw new Error(`${recordPath(cwd)} 中会话 ${id} 的 generation 无效`)
     }
   }
-  return sessions
+  return { leadId: storedLead ?? undefined, sessions }
+}
+
+/**
+ * 原子替换整份记录。Lead 指针与成员表一次写入，避免 updateRecord 把指针抹掉，
+ * 也让"登记 Lead + 转移成员"成为一次落盘。
+ * @param {string} cwd @param {{leadId?: string | undefined, sessions: Record<string, any>}} next
+ */
+export function writeTeam(cwd, next) {
+  const path = recordPath(cwd)
+  mkdirSync(join(cwd, '.dsh'), { recursive: true })
+  const temporary = `${path}.${randomUUID()}.tmp`
+  const body = next.leadId === undefined ? { sessions: next.sessions } : { leadId: next.leadId, sessions: next.sessions }
+  writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`, { flag: 'wx' })
+  renameSync(temporary, path)
 }
 
 /** 同步读改写避免多个工作会话覆盖彼此；文件替换后才发布内存状态。 @param {string} cwd @param {string} id @param {any} record */
 export function updateRecord(cwd, id, record) {
-  const sessions = readRecords(cwd)
+  const { leadId, sessions } = readRecords(cwd)
   if (record === undefined) delete sessions[id]
   else sessions[id] = record
-  const path = recordPath(cwd)
-  mkdirSync(join(cwd, '.dsh'), { recursive: true })
-  const temporary = `${path}.${randomUUID()}.tmp`
-  writeFileSync(temporary, `${JSON.stringify({ sessions }, null, 2)}\n`, { flag: 'wx' })
-  renameSync(temporary, path)
+  writeTeam(cwd, { leadId, sessions })
+}
+
+/**
+ * 登记或清除本工作区的 Lead。
+ * @param {string} cwd @param {string | undefined} leadId
+ */
+export function updateLead(cwd, leadId) {
+  const { sessions } = readRecords(cwd)
+  writeTeam(cwd, { leadId, sessions })
+}
+
+/**
+ * 登记在册的 Lead 是否还在。会话已消失（删除或从未存在）时槽位视为空，可被接管。
+ * @param {string | undefined} storedLeadId @param {readonly string[]} knownSessionIds @returns {string | undefined}
+ */
+export function liveLeadId(storedLeadId, knownSessionIds) {
+  if (storedLeadId === undefined) return undefined
+  return knownSessionIds.includes(storedLeadId) ? storedLeadId : undefined
+}
+
+/**
+ * 把本工作区里**所有不属于新 Lead** 的成员记录收过来，并重新生成 generation ——
+ * 旧的投递代次随之失效，上一任在途的回传不会漏过来。
+ *
+ * 一个工作区只有一个 Lead，所以指向别人的记录一定是过期归属：前任名下的、指向已消失
+ * Lead 的、以及「失去 Lead」后留在原地等接管的，都属于这一类。按 cwd 分文件，所以
+ * 这张表里的记录都在同一个工作区。
+ * @param {Record<string, any>} sessions @param {string} leadId @returns {Record<string, any>}
+ */
+export function adoptMembers(sessions, leadId) {
+  const next = {}
+  for (const [id, row] of Object.entries(sessions)) {
+    next[id] = row.leadId === leadId ? row : { ...row, leadId, generation: randomUUID() }
+  }
+  return next
 }
 
 /** @param {any} ctx @param {string} id @param {AbortSignal | undefined} signal @param {(snapshot: any) => any} operation */

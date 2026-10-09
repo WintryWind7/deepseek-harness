@@ -27,6 +27,12 @@ export function apply(ctx) {
   const manager = () => getManager(ctx)
   const lead = exec => manager().assertLead(exec.agent)
   const definitions = [
+    tool('become_lead', '成为本工作区的 Lead。每个工作区只有一个 Lead，这是使用其它团队工具的前提。已有 Lead 时先拒绝；带 takeover: true 会先弹窗询问用户是否替换，用户同意才生效并把现任名下的成员全部接管过来。', {
+      takeover: { type: 'boolean', description: '已有 Lead 时是否请求替换。省略或 false 时只报告现任 Lead 并拒绝。' },
+    }, [], (args, exec) => manager().becomeLead(exec.agent, args, exec.signal),
+    value => value.replaced === null
+      ? `你已经是本工作区的 Lead，当前名下 ${value.members} 个成员。`
+      : `你已经是本工作区的 Lead，接管了原 Lead ${value.replaced} 名下的 ${value.members} 个成员。`),
     tool('open_session', '新建独立根会话并纳入你的管理，发送第一条任务。返回会话 id；每轮结束结果会自动送回本会话。', {
       title: { type: 'string', description: '工作会话标题。' },
       prompt: { type: 'string', description: '自包含的任务、范围与约束；不会复制 Lead 的聊天上下文。' },
