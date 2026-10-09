@@ -47,6 +47,7 @@ window.__ModuleLoader__.load({
       running: '运行中',
       waiting: '等待回答',
       idle: '空闲',
+      // 轮次结束原因的标签（reasonLabel 用），不是状态：状态没有 error。
       error: '运行出错',
       missing: '会话不可用',
       questions: '{count} 个待答问题',
@@ -95,6 +96,7 @@ window.__ModuleLoader__.load({
       running: 'Running',
       waiting: 'Waiting for answers',
       idle: 'Idle',
+      // Turn-end reason label (used by reasonLabel), not a status.
       error: 'Run failed',
       missing: 'Session unavailable',
       questions: '{count} pending questions',
@@ -137,7 +139,7 @@ window.__ModuleLoader__.load({
       .wt-dot { flex:none; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-state-idle-primary); }
       .wt-state[data-state='running'] .wt-dot { background:var(--dsw-alias-brand-primary); }
       .wt-state[data-state='waiting'] .wt-dot { background:var(--dsw-alias-state-warn-primary); }
-      .wt-state[data-state='error'] .wt-dot,.wt-state[data-state='missing'] .wt-dot { background:var(--dsw-alias-state-error-primary); }
+      .wt-state[data-state='missing'] .wt-dot { background:var(--dsw-alias-state-error-primary); }
       .wt-meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:6px 0 0; font-size:12px; color:var(--dsw-alias-label-secondary); }
       .wt-preset { display:flex; min-width:0; gap:6px; overflow-wrap:anywhere; }
       .wt-result { margin-top:10px; border-top:1px solid var(--dsw-alias-border-l1); padding-top:8px; }
@@ -179,7 +181,7 @@ window.__ModuleLoader__.load({
       if (value.members !== undefined && (!Number.isInteger(value.members) || value.members < 0)) {
         throw new Error('Invalid team member count');
       }
-      const statuses = ['running','waiting','idle','error','missing'];
+      const statuses = ['running','waiting','idle','missing'];
       for (const row of value.sessions) {
         if (!row || typeof row.sessionId !== 'string' || typeof row.title !== 'string'
           || typeof row.preset !== 'string' || !statuses.includes(row.status)

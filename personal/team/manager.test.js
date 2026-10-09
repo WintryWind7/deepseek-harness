@@ -199,12 +199,13 @@ test('面板动作：纳入、移出、成为 Lead、失去 Lead', async () => {
   } finally { h.cleanup() }
 })
 
-test('冷会话与载入后闲置的会话都报「空闲」，不再有「未运行」', async () => {
+test('状态只表达任务状态：冷会话与载入后闲置都是「空闲」', async () => {
   const h = await setup()
   try {
     const lead = h.add('lead-1', { agentPreset: 'team-dev' })
     h.add('warm-1', { agentPreset: 'main-dev' })
     h.addCold('cold-1', { agentPreset: 'main-dev' })
+    h.add('busy-1', { agentPreset: 'main-dev' }).status = 'running'
     await h.manager.becomeLead(lead, {}, undefined)
     const page = await h.manager.panel('warm-1', undefined)
     const byId = id => page.sessions.find(row => row.sessionId === id)
@@ -212,9 +213,14 @@ test('冷会话与载入后闲置的会话都报「空闲」，不再有「未�
     // 冷会话没有 live agent，也不会有在途提问等待者，对用户与「载入后没事做」是同一件事。
     assert.equal(byId('cold-1').status, 'idle')
     assert.equal(byId('cold-1').pendingQuestions, 0)
+    assert.equal(byId('busy-1').status, 'running')
     const listed = await h.manager.list(lead, {}, undefined)
     assert.equal(listed.sessions.find(row => row.sessionId === 'cold-1').status, 'idle')
-    for (const row of [...page.sessions, ...listed.sessions]) assert.notEqual(row.status, 'offline')
+    // 状态词汇就这四个：offline 与 error 都不在其中。
+    const vocabulary = ['running', 'waiting', 'idle', 'missing']
+    for (const row of [...page.sessions, ...listed.sessions]) {
+      assert.ok(vocabulary.includes(row.status), `unexpected status ${row.status}`)
+    }
   } finally { h.cleanup() }
 })
 
