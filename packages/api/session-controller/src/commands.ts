@@ -148,7 +148,28 @@ export class SessionCommandController {
    * @param request - Session identity and requested model selection.
    * @returns the normalized selection installed for the Session, without waiting for default persistence.
    */
-  async selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
+  selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
+    return this.installSessionModel(request, true)
+  }
+
+  /**
+   * Validate and install one Session-local model selection without saving the account default.
+   * @param request - Session identity and requested model selection.
+   * @returns the normalized selection installed for the Session.
+   */
+  selectSessionModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
+    return this.installSessionModel(request, false)
+  }
+
+  /**
+   * @param request - Session identity and requested model selection.
+   * @param persistDefault - whether to save the selection as the account default in the background.
+   * @returns the normalized selection installed for the Session.
+   */
+  private async installSessionModel(
+    request: SessionSelectModelRequest,
+    persistDefault: boolean,
+  ): Promise<SessionSelectModelValue> {
     const agent = await this.resolveAgent(request.sessionId)
     return this.agents.serializeImageAdmission(agent, async () => {
       try {
@@ -168,11 +189,13 @@ export class SessionCommandController {
             : { reasoningEffort: resolved.reasoningEffort }),
         }
         this.agents.selectForNextRequest(agent, selected)
-        void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
-          this.ctx.logger.warn(
-            `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
-          )
-        })
+        if (persistDefault) {
+          void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
+            this.ctx.logger.warn(
+              `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
+            )
+          })
+        }
         return { selected: { ...selected } }
       } catch (error) {
         if (remoteErrorOf(error) !== undefined) throw error

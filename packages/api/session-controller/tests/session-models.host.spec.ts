@@ -688,6 +688,35 @@ describe('Web session model selection', () => {
     await ctx.fiber.dispose()
   })
 
+  it('installs a session selection without saving the account default', async () => {
+    const { ctx, sessionId } = await harness()
+    const saved: unknown[] = []
+    const remote = createSessionTestRemote(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      saveDefaultModelSelection: selection => { saved.push(selection) },
+      cwd: '/tmp',
+    })
+    const controller = createSessionTestController(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+    })
+
+    const installed = await controller.selectSessionModel({
+      sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
+    })
+    expect(installed.selected).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
+    })
+    expect(currentSelection(ctx, sessionId)).toEqual(installed.selected)
+    expect(saved).toEqual([])
+
+    expectValue(await remote.selectModel(request({
+      sessionId, provider: 'deepseek-official', model: 'deepseek-chat',
+    })))
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' }])
+    await ctx.fiber.dispose()
+  })
+
   it('admits saved selections without querying the advisory model catalog', async () => {
     const { ctx, sessionId, agent } = await harness()
     const followup = vi.fn()
