@@ -20,7 +20,11 @@
 
 之后 Lead 用 `open_session` 新建根会话（默认 `main-dev` 预设，自动纳入管理），用 `list_sessions` 找已有根会话，用 `manage_session` 纳入或移出。移出不停止、不删除会话。
 
+`open_session` 的 `provider`、`model`、`reasoning_effort` 要么一起给出，让新会话用这个模型，要么都省略，沿用 Lead 当前模型。已有根会话用 `set_session_model` 改它的下一次请求：不打断正在跑的轮次，也不改账号默认模型。不能改 Lead 自己，也不能改别的工作目录里的会话。
+
 Lead 用 `continue_session` 发下一句话，用 `read_session` 主动读状态、待答问题、最近已提交正文和指定轮次结果。未纳入管理的根会话仍可接收消息，但不回传给这个 Lead。
+
+`wait_session` 等到一个**已纳入管理**的会话这一轮回到空闲，必须给出 1–3600 秒的 `timeout_seconds`。已经空闲且没有排队消息时立刻返回。会话停在提问上时提前返回，Lead 用 `reply_question` 回答。超时不报错，结果里写明仍在运行。等的是这一轮，不是整个任务。
 
 一个工作会话同时只属于一个 Lead。不接受 subagent，也不支持嵌套 Lead。工作会话不复制 Lead 的聊天上下文，默认共享工作目录。
 
@@ -101,6 +105,7 @@ Lead 工作目录的 `.dsh/team-dev-sessions.json`：顶层 `leadId` 记本工�
 - 面板一次列出该目录所有会话，不分页，并且为每一行计算正文预览；目录下会话很多时，这是这个插件最重的一次读取。
 - 面板**不是只读的**：每行按钮会直接改管理关系。写路由在浏览器信任栅栏内，拿到 token 的浏览器都能改。
 - 纳入与成为 Lead 都**只在同一个工作目录内生效**：`manage_session` 与面板都会拒绝跨目录的目标，因为列表和面板按 cwd 过滤，纳进来只会看不见。
+- `set_session_model` 只改这个会话的下一次请求，不写账号默认模型。`wait_session` 只等已纳入的会话，并且只表示这一轮回到空闲。
 - 会话归档或预设被改换后，回传可能被官方会话策略阻止，失败保留投递位置供恢复。
 
 ## 安装和迭代
@@ -110,4 +115,4 @@ Lead 工作目录的 `.dsh/team-dev-sessions.json`：顶层 `leadId` 记本工�
 - **`client.js`** 每次刷新页面重新读盘，浏览器侧改动只需刷新。
 - **`index.js`、`sessions.js`、`questions.js`、`runtime.js`** 解析一次后常驻进程模块表，改动需要重启 `dsh web`。
 - 已经打开的会话保留挂载时的预设代次；`team-dev` 的改动要在**新建**的团队会话里验证。
-- 测试：`node --test personal/team/predicate.test.js personal/team/manager.test.js`。前者测可见性谓词与记录文件读写，后者用最小的假 ctx 在进程内驱动管理实例 —— 登记校验、接管询问的同意/拒绝/取消、成员转移、面板四个动作都在其中。
+- 测试：`node --test personal/team/predicate.test.js personal/team/manager.test.js`。前者测可见性谓词、模型参数与记录文件读写，后者用最小的假 ctx 在进程内驱动管理实例 —— 登记校验、接管询问的同意/拒绝/取消、成员转移、面板四个动作、换模型与等待都在其中。

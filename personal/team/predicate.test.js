@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
-  adoptMembers, isRoot, isVisibleRoot, liveLeadId, mapLimit, readRecords, titleText, updateLead,
+  adoptMembers, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, readRecords, titleText, updateLead,
   updateRecord, writeTeam,
 } from './runtime.js'
 
@@ -167,4 +167,14 @@ test('登记 Lead 的整条落盘：写槽位 + 收编成员 + 保留投递位�
     writeTeam(cwd, { leadId: 'lead-1', sessions: adoptMembers(after.sessions, 'lead-1') })
     assert.deepEqual(readRecords(cwd).sessions, after.sessions)
   })
+})
+
+test('modelSelection 要么三项一起给，要么在可选时全部省略', () => {
+  assert.equal(modelSelection({}, false), undefined)
+  assert.deepEqual(modelSelection({ provider: ' p ', model: 'm', reasoning_effort: 'high' }, true), {
+    provider: 'p', model: 'm', reasoningEffort: 'high',
+  })
+  assert.throws(() => modelSelection({ model: 'm' }, false), /必须一起给出/)
+  assert.throws(() => modelSelection({}, true), /必须一起给出/)
+  assert.throws(() => modelSelection({ provider: ' ', model: 'm', reasoning_effort: 'high' }, true), /provider/)
 })

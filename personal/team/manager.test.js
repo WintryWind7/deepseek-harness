@@ -26,13 +26,20 @@ async function setup(options = {}) {
   const rows = new Map()
   const live = new Map()
   const asks = []
+  const listeners = new Map()
   const ask = options.ask ?? (() => ['保持现状'])
   const ctx = {
     logger: { warn() {}, info() {} },
-    on: () => () => {},
+    on: (name, fn) => {
+      const list = listeners.get(name) ?? []
+      list.push(fn)
+      listeners.set(name, list)
+      return () => {}
+    },
     effect: () => {},
     get: name => {
       if (name === 'workspaceRegistry') return { archivedSessionIds: [] }
+      if (name === 'sessionController') return options.sessionController
       if (name === 'userQuestions') {
         return {
           ask: async request => {
@@ -62,7 +69,10 @@ async function setup(options = {}) {
   /** 造一个会话 + 它的 live agent，返回 agent。 @param {string} id @param {object} [extra] */
   const add = (id, extra = {}) => {
     const header = { id, cwd, origin: 'root', ...extra }
-    const agent = { id, session: { header, seq: 100 } }
+    const agent = {
+      id, status: 'idle', followup() {}, inbox: { nextTurn: [], nextStep: [] },
+      session: { header, seq: 100 },
+    }
     rows.set(id, { header, live: agent })
     live.set(id, agent)
     return agent
@@ -74,7 +84,7 @@ async function setup(options = {}) {
     return header
   }
   return {
-    cwd, manager, add, addCold, asks,
+    cwd, manager, add, addCold, asks, listeners,
     cleanup: () => rmSync(cwd, { recursive: true, force: true }),
   }
 }
@@ -239,5 +249,75 @@ test('面板成为 Lead 的准入：非 team-dev、受管理工作会话、Lead 
     await assert.rejects(() => h.manager.panelAct('work-1', 'become-lead', 'dev-1', undefined), /受管理工作会话/)
     // 未知动作
     await assert.rejects(() => h.manager.panelAct('work-1', 'nope', 'work-1', undefined), /未知的面板操作/)
+  } finally { h.cleanup() }
+})
+
+test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未接入的控制器', async () => {
+  const calls = []
+  const h = await setup({
+    sessionController: {
+      selectSessionModel: async request => {
+        calls.push(request)
+        return { selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort } }
+      },
+    },
+  })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    h.add('work-1', { agentPreset: 'main-dev' })
+    h.add('work-other', { agentPreset: 'main-dev', cwd: join(h.cwd, '..', 'somewhere-else') })
+    await h.manager.becomeLead(lead, {}, undefined)
+    const selection = { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'high' }
+    const installed = await h.manager.setSessionModel(lead, 'work-1', selection, undefined)
+    assert.deepEqual(calls, [{ sessionId: 'work-1', ...selection }])
+    assert.equal(installed.model, 'deepseek-reasoner')
+    await assert.rejects(() => h.manager.setSessionModel(lead, 'lead-1', selection, undefined), /不能改 Lead 自己/)
+    await assert.rejects(() => h.manager.setSessionModel(lead, 'work-other', selection, undefined), /不在本工作区/)
+    assert.equal(calls.length, 1)
+  } finally { h.cleanup() }
+  const bare = await setup()
+  try {
+    const lead = bare.add('lead-1', { agentPreset: 'team-dev' })
+    bare.add('work-1', { agentPreset: 'main-dev' })
+    await bare.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(
+      () => bare.manager.setSessionModel(lead, 'work-1', { provider: 'p', model: 'm', reasoningEffort: 'high' }, undefined),
+      /会话模型选择不可用/,
+    )
+  } finally { bare.cleanup() }
+})
+
+test('wait 对空闲立刻返回，跑起来后等到空闲，提问则提前返回', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    const idle = await h.manager.wait(lead, 'work-1', 30, undefined)
+    assert.deepEqual(idle, { sessionId: 'work-1', status: 'idle', pendingQuestions: 0, timedOut: false, waited: false })
+    assert.throws(() => h.manager.wait(lead, 'missing', 30, undefined), /不在这个 Lead 的管理范围/)
+    assert.throws(() => h.manager.wait(lead, 'work-1', 0, undefined), /timeout_seconds/)
+
+    work.status = 'running'
+    const waiting = h.manager.wait(lead, 'work-1', 30, undefined)
+    work.status = 'idle'
+    h.manager.changed()
+    const done = await waiting
+    assert.equal(done.status, 'idle')
+    assert.equal(done.waited, true)
+    assert.equal(done.timedOut, false)
+
+    const handler = h.listeners.get('user-questions/request')?.[0]
+    assert.ok(handler)
+    handler({
+      agent: work,
+      questions: [{ id: 'q1', question: '继续？' }],
+      signal: new AbortController().signal,
+    }, () => new Promise(() => {}))
+    const asked = await h.manager.wait(lead, 'work-1', 30, undefined)
+    assert.equal(asked.status, 'waiting')
+    assert.equal(asked.pendingQuestions, 1)
+    assert.equal(asked.waited, false)
   } finally { h.cleanup() }
 })

@@ -45,6 +45,16 @@ export function getManager(ctx) {
 }
 
 /**
+ * 测试把 {@link createManager} 的实例挂到 ctx 上，让 Lead 工具能找到它。
+ * @param {any} ctx @param {any} manager @returns {() => void}
+ */
+export function bindManager(ctx, manager) {
+  const root = ctx.root ?? ctx
+  managers.set(root, manager)
+  return () => { if (managers.get(root) === manager) managers.delete(root) }
+}
+
+/**
  * 建一个管理实例。导出是为了让测试能用最小的假 ctx 在进程内驱动它：接管询问、
  * 归属转移、面板写操作这些路径都要真实走一遍，而不是只测纯函数。
  * @param {any} ctx @param {{resultChars: number, questionHistoryLimit: number}} config @returns {any}
@@ -78,7 +88,12 @@ export function createManager(ctx, config) {
       try { listener() } catch (error) { ctx.logger.warn('团队面板通知失败：%s', error.message) }
     }
   }
+  /** 等待工具要马上看到状态变化；面板通知仍走下面的合并窗口。 */
+  const activityListeners = new Set()
   const changed = () => {
+    for (const listener of activityListeners) {
+      try { listener() } catch (error) { ctx.logger.warn('团队等待通知失败：%s', error.message) }
+    }
     if (closed || notifyTimer !== undefined) return
     notifyTimer = setTimeout(notify, NOTIFY_WINDOW_MS)
   }
@@ -551,6 +566,83 @@ export function createManager(ctx, config) {
       return { ...state, latestTurn: result, questions: questions.view(id) }
     },
     reply(lead, args) { assertLead(lead); return questions.reply(lead, args) },
+    /**
+     * 改一个本工作目录根会话的下一次模型请求。不改账号默认，也不打断正在跑的轮次。
+     * @param {any} lead @param {string} id @param {{provider: string, model: string, reasoningEffort: string}} selection
+     * @param {AbortSignal | undefined} signal
+     */
+    async setSessionModel(lead, id, selection, signal) {
+      assertLead(lead)
+      if (id === lead.id) throw new Error('不能改 Lead 自己的模型；用会话自己的模型选择')
+      const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+      // 先核对目录再恢复，避免把别的工作区的冷会话拉起来。
+      const live = ctx.agents.get(id)
+      const header = live?.session.header ?? await observe(ctx, id, signalFor(signal), snapshot => snapshot.header)
+      assertRoot(header, ctx)
+      if (header.cwd !== cwd) throw new Error(`会话 ${id} 不在本工作区 ${cwd}`)
+      const agent = live ?? await ensureAgent(id, signal)
+      const controller = ctx.get('sessionController')
+      if (!controller?.selectSessionModel) throw new Error('会话模型选择不可用')
+      const installed = await controller.selectSessionModel({
+        sessionId: id,
+        provider: selection.provider,
+        model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+      })
+      return { sessionId: id, ...installed.selected }
+    },
+    /**
+     * 等到受管理会话这一轮回到空闲，或超时。已空闲立刻返回；有待答问题提前返回，
+     * 好让 Lead 去 reply_question。超时不抛错。
+     * @param {any} lead @param {string} id @param {number} timeout @param {AbortSignal | undefined} signal
+     */
+    wait(lead, id, timeout, signal) {
+      assertLead(lead)
+      const record = records.get(id)
+      if (!record || record.leadId !== lead.id) throw new Error(`会话 ${id} 不在这个 Lead 的管理范围`)
+      if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 3600) throw new Error('timeout_seconds 必须是 1 至 3600 的整数')
+      const queued = agent => {
+        const inbox = agent?.inbox
+        if (!inbox) return 0
+        return (inbox.nextTurn?.length ?? 0) + (inbox.nextStep?.length ?? 0)
+      }
+      const activity = () => {
+        const live = ctx.agents.get(id)
+        const pending = live ? questions?.count(id) ?? 0 : 0
+        if (pending > 0) return { status: 'waiting', pendingQuestions: pending }
+        if (live?.status === 'running' || queued(live) > 0) return { status: 'running', pendingQuestions: 0 }
+        return { status: 'idle', pendingQuestions: 0 }
+      }
+      const initial = activity()
+      if (initial.status !== 'running') return { sessionId: id, ...initial, timedOut: false, waited: false }
+      const linked = signalFor(signal)
+      return new Promise((resolve, reject) => {
+        let settled = false
+        const finish = (value, error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          unsubscribe()
+          linked.removeEventListener('abort', onAbort)
+          if (error) reject(error)
+          else resolve(value)
+        }
+        const tick = () => {
+          const snap = activity()
+          if (snap.status !== 'running') finish({ sessionId: id, ...snap, timedOut: false, waited: true })
+        }
+        const onAbort = () => finish(null, linked.reason instanceof Error ? linked.reason : new Error('等待已取消'))
+        const timer = setTimeout(() => {
+          const snap = activity()
+          finish({ sessionId: id, ...snap, timedOut: snap.status === 'running', waited: true })
+        }, timeout * 1000)
+        const unsubscribe = () => activityListeners.delete(tick)
+        activityListeners.add(tick)
+        if (linked.aborted) onAbort()
+        else linked.addEventListener('abort', onAbort, { once: true })
+        tick()
+      })
+    },
     async panel(sessionId, signal) {
       // 面板不做 Lead 过滤：任何会话打开都看到同一工作目录下未归档的根会话。
       const viewed = await describe(sessionId, signal, 240)

@@ -95,6 +95,26 @@ export function modelOptions(agent) {
 }
 
 /**
+ * 从工具参数取出一次模型选择。`required` 为 false 且三项都省略时返回 undefined，
+ * 调用方沿用 Lead 当前模型。只要给了任何一项，三项就都必须是非空字符串。
+ * @param {any} args @param {boolean} required
+ * @returns {{provider: string, model: string, reasoningEffort: string} | undefined}
+ */
+export function modelSelection(args, required) {
+  const provider = args?.provider
+  const model = args?.model
+  const effort = args?.reasoning_effort
+  const given = [provider, model, effort].filter(value => value !== undefined)
+  if (!required && given.length === 0) return undefined
+  if (given.length !== 3) throw new Error('provider、model、reasoning_effort 必须一起给出')
+  return {
+    provider: requiredText(provider, 'provider'),
+    model: requiredText(model, 'model'),
+    reasoningEffort: requiredText(effort, 'reasoning_effort'),
+  }
+}
+
+/**
  * 手写一条 user 角色的消息。source 决定它在聊天里怎么渲染：默认 `user` 是用户气泡。
  * @param {string} text @param {string} [id] @param {object} [source] @returns {object}
  */
