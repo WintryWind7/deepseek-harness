@@ -94,9 +94,12 @@ export function modelOptions(agent) {
   }
 }
 
-/** @param {string} text @param {string} [id] @returns {object} */
-export function userMessage(text, id = randomUUID()) {
-  return { id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } }
+/**
+ * 手写一条 user 角色的消息。source 决定它在聊天里怎么渲染：默认 `user` 是用户气泡。
+ * @param {string} text @param {string} [id] @param {object} [source] @returns {object}
+ */
+export function userMessage(text, id = randomUUID(), source = { kind: 'user' }) {
+  return { id, role: 'user', content: [{ type: 'text', text }], source }
 }
 
 /** @param {string} cwd @returns {string} */

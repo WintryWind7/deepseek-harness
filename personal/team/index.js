@@ -194,7 +194,14 @@ function createManager(ctx, config) {
       const suffix = shortened ? `\n（正文已截断，可用 read_session 查看第 ${result.turn} 轮。）` : ''
       // 上限包含说明文字与截断提示。
       const room = Math.max(0, config.resultChars - heading.length - suffix.length)
-      lead.followup(userMessage(heading + body.slice(0, room) + suffix, messageId))
+      // 回传是机器送来的轮次结果，不是用户发言。`team-message` 是 ui-chat 已识别的
+      // 来源（client/chat/turn-trigger.ts）：唤起空闲 Lead 时渲染成带「收到团队消息」
+      // 标题与团队图标的通知卡，而不是用户气泡；`notice` 加 summary 给出折叠行摘要。
+      lead.followup(userMessage(heading + body.slice(0, room) + suffix, messageId, {
+        kind: 'team-message',
+        form: 'notice',
+        summary: `${title} 第 ${result.turn} 轮 · ${result.reason}`,
+      }))
     }
     if (!await ctx.sessions.flush(lead.session)) throw new Error('Lead 的结果收据未持久化')
     if (records.get(id)?.generation !== row.generation) return
