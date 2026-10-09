@@ -414,7 +414,7 @@ window.__ModuleLoader__.load({
         display: inline-flex; align-items: center; gap: 4px; flex: none;
         border: none; border-radius: 8px; padding: 4px 10px;
         background: var(--dsw-alias-brand-primary);
-        color: var(--dsw-alias-button-contrast-fill);
+        color: var(--dsw-alias-label-primary-foreground);
         cursor: pointer; font-size: 12px;
       }
       .gp-push:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); }
