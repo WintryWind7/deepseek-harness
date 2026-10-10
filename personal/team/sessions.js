@@ -94,17 +94,17 @@ export function apply(ctx) {
       if (value.kind === 'result') return `会话 ${value.sessionId} 发来一轮结果。正文已送入本会话。这不代表整个任务完成。`
       return value.waited ? '受管理会话都已停下，没有新消息。' : '现在没有在跑、待答或即将回传的受管理会话。'
     }),
-    tool('continue_session', '给已有根会话发送下一条消息，必要时恢复它。只有纳入管理的会话才会自动回传结果；回答待答问题用 reply_question。', {
+    tool('continue_session', '给已有根会话送下一句话，必要时恢复它。对方正在跑时，这句话插进当前轮的下一步，不等这轮结束；正在执行的工具不会被打断。对方空闲时照常开始下一轮。只有纳入管理的会话才会自动回传结果；回答待答问题用 reply_question。', {
       session_id: { type: 'string', description: '目标根会话 id。' },
-      message: { type: 'string', description: '下一条任务或补充指令。' },
+      message: { type: 'string', description: '下一条任务或补充指令。正在跑时会插进当前轮。' },
     }, ['session_id', 'message'], async (args, exec) => {
       lead(exec)
       const id = requiredText(args.session_id, 'session_id')
       const message = requiredText(args.message, 'message')
       const agent = await manager().ensureAgent(id, exec.signal)
-      agent.followup(userMessage(message))
+      agent.steer(userMessage(message))
       return { sessionId: id, managed: manager().owner(id)?.leadId === exec.agent.id }
-    }, value => `消息已送入根会话：${value.sessionId}。${value.managed ? '每轮结束结果会回传给你。' : '该会话不在你的管理范围，结果不会自动回传给你。'}`),
+    }, value => `消息已插入根会话：${value.sessionId}。对方正在跑时，当前这一步结束后就能看到，不等这轮结束。${value.managed ? '每轮结束结果会回传给你。' : '该会话不在你的管理范围，结果不会自动回传给你。'}`),
     tool('manage_session', '将已有根会话纳入或移出你的管理。纳入后回传后续每轮结果并转发提问；移出不停止、不删除会话。', {
       session_id: { type: 'string', description: '目标根会话 id，可先用 list_sessions 查找。' },
       action: { type: 'string', enum: ['add', 'remove'], description: 'add 纳入，remove 移出。' },
