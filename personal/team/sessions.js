@@ -1,7 +1,7 @@
 /** Lead 专用工具。工作会话、管理面板和轮次回传由同一个 Host 管理实例驱动。 */
 import { randomUUID } from 'node:crypto'
 import { getManager } from './index.js'
-import { DEFAULT_PRESET, modelOptions, modelSelection, requiredText, userMessage } from './runtime.js'
+import { DEFAULT_PRESET, modelOptions, modelSelection, mountPreset, requiredText, userMessage } from './runtime.js'
 
 export const name = 'lead-sessions'
 export const inject = ['tools', 'agents']
@@ -53,7 +53,7 @@ export function apply(ctx) {
         sessionId: `session-${randomUUID()}`,
         meta: { cwd: requiredText(caller.session.header.cwd, '工作目录'), agentPreset: preset },
         agentOptions: chosen ?? modelOptions(caller), signal: exec.signal,
-        setup: agentCtx => presets.mount(agentCtx, preset),
+        setup: mountPreset(presets, preset),
       })
       const agent = handle.agent
       try {

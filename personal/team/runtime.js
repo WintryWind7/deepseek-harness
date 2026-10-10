@@ -79,6 +79,19 @@ export function presetIdOf(ctx, agent) {
   return ctx.get('sessionProjections')?.stateOf(agent.session, 'agentPreset') ?? agent.session.header.agentPreset
 }
 
+/**
+ * 新建或恢复会话时绑定预设。`mount` 解析出的是预设身份，不是带 `commit()` 的发布句柄；
+ * 把身份对象交回去时，工厂会调用它的 `commit()` 并失败。这里等绑定完成，再返回空值。
+ * @param {{ mount: (agentCtx: any, id: string) => Promise<unknown> }} presets
+ * @param {string} preset 预设 id
+ * @returns {(agentCtx: any) => Promise<void>}
+ */
+export function mountPreset(presets, preset) {
+  return async agentCtx => {
+    await presets.mount(agentCtx, preset)
+  }
+}
+
 /** @param {any} agent @returns {Record<string, unknown>} */
 export function modelOptions(agent) {
   const config = agent.session.requestHeader()?.config ?? {}

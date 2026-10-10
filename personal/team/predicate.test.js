@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
-  adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, readRecords, titleText, updateLead,
+  adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, mountPreset, readRecords, titleText, updateLead,
   updateRecord, writeTeam,
 } from './runtime.js'
 
@@ -188,4 +188,18 @@ test('goalWillContinue 只在还会自动续轮时为真', () => {
   assert.equal(goalWillContinue(armed, 'max-tokens'), false)
   assert.equal(goalWillContinue(armed, 'aborted'), false)
   assert.equal(goalWillContinue(undefined, 'completed'), false)
+})
+
+test('mountPreset 等绑定完成，不把预设身份交给工厂的 commit', async () => {
+  let seen
+  const presets = {
+    mount: async (agentCtx, id) => {
+      seen = { agentCtx, id }
+      return { id }
+    },
+  }
+  const commit = await mountPreset(presets, 'main-dev')({ scope: 'child' })
+  assert.deepEqual(seen, { agentCtx: { scope: 'child' }, id: 'main-dev' })
+  assert.equal(commit, undefined)
+  assert.doesNotThrow(() => { commit?.commit() })
 })

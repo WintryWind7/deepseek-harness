@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   adoptMembers, assertRoot, goalWillContinue, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
-  observe, presetIdOf, readRecords, readStored, requiredText, restoredModel, titleText, turnResult,
+  mountPreset, observe, presetIdOf, readRecords, readStored, requiredText, restoredModel, titleText, turnResult,
   updateLead, updateRecord, userMessage, writeTeam,
 } from './runtime.js'
 import { createQuestions } from './questions.js'
@@ -212,7 +212,7 @@ export function createManager(ctx, config) {
       if (!presets || !preset) throw new Error(`会话 ${id} 缺少可恢复的预设`)
       const handle = await ctx.agents.resume({
         resumeSessionId: id, agentOptions: restoredModel(snapshot), signal: signalFor(signal),
-        setup: agentCtx => presets.mount(agentCtx, preset),
+        setup: mountPreset(presets, preset),
       })
       return handle.agent
     })
