@@ -81,7 +81,7 @@ export function apply(ctx) {
       const caller = lead(exec)
       return manager().setSessionModel(caller, requiredText(args.session_id, 'session_id'), modelSelection(args, true), exec.signal)
     }, value => `已改 ${value.sessionId} 的下一次请求：${value.provider}/${value.model}，强度 ${value.reasoningEffort}。正在跑的轮次不受影响。`),
-    tool('wait_session', '等到你管理的根会话这一轮回到空闲，或到达超时。等的是这一轮，不是整个任务。已经空闲会立刻返回。它停在提问上时提前返回，这时用 reply_question。超时不报错，返回仍在运行。', {
+    tool('wait_session', '仅当用户明确要求使用本工具时调用。不要因为任务很长、开了 goal，或要等上一个会话做完，就自行调用。用户要求使用时，通常是 goal 正在推进、这一阶段用户不参与、工作会话要跑很久：在本轮里等到那一轮空闲，避免本轮结束后被再次唤起空转。已经空闲会立刻返回。它停在提问上时提前返回，这时用 reply_question。超时不报错。等的是这一轮，不是整个任务。', {
       session_id: { type: 'string', description: '你管理的根会话 id。' },
       timeout_seconds: { type: 'integer', minimum: 1, maximum: 3600, description: '等待上限，1 至 3600 的整数秒。' },
     }, ['session_id', 'timeout_seconds'], (args, exec) => manager().wait(lead(exec), requiredText(args.session_id, 'session_id'), args.timeout_seconds, exec.signal),
