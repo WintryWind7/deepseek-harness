@@ -288,38 +288,67 @@ test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未�
   } finally { bare.cleanup() }
 })
 
-test('wait 对空闲立刻返回，跑起来后等到空闲，提问则提前返回', async () => {
+test('wait 不指定会话：没人会发消息就立刻返回，否则等第一条结果或提问', async () => {
   const h = await setup()
   try {
     const lead = h.add('lead-1', { agentPreset: 'team-dev' })
     const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const other = h.add('work-2', { agentPreset: 'main-dev' })
     await h.manager.becomeLead(lead, {}, undefined)
     await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
-    const idle = await h.manager.wait(lead, 'work-1', 30, undefined)
-    assert.deepEqual(idle, { sessionId: 'work-1', status: 'idle', pendingQuestions: 0, timedOut: false, waited: false })
-    assert.throws(() => h.manager.wait(lead, 'missing', 30, undefined), /不在这个 Lead 的管理范围/)
-    assert.throws(() => h.manager.wait(lead, 'work-1', 0, undefined), /timeout_seconds/)
+    await h.manager.panelAct('work-1', 'add', 'work-2', undefined)
+    await new Promise(resolve => setImmediate(resolve))
+    const idle = await h.manager.wait(lead, 30, undefined)
+    assert.deepEqual(idle, { kind: 'none', timedOut: false, waited: false })
+    assert.throws(() => h.manager.wait(lead, 0, undefined), /timeout_seconds/)
 
     work.status = 'running'
-    const waiting = h.manager.wait(lead, 'work-1', 30, undefined)
-    work.status = 'idle'
-    h.manager.changed()
+    other.status = 'running'
+    const waiting = h.manager.wait(lead, 30, undefined)
+    h.manager.noteInbound({ sessionId: 'work-2', leadId: 'lead-1', kind: 'result' })
     const done = await waiting
-    assert.equal(done.status, 'idle')
-    assert.equal(done.waited, true)
-    assert.equal(done.timedOut, false)
+    assert.deepEqual(done, { sessionId: 'work-2', kind: 'result', timedOut: false, waited: true })
+
+    work.status = 'running'
+    const stopping = h.manager.wait(lead, 30, undefined)
+    work.status = 'idle'
+    other.status = 'idle'
+    h.manager.changed()
+    const stopped = await stopping
+    assert.deepEqual(stopped, { kind: 'none', timedOut: false, waited: true })
+
+    work.status = 'running'
+    const questioning = h.manager.wait(lead, 30, undefined)
+    h.manager.noteInbound({ sessionId: 'work-1', leadId: 'lead-1', kind: 'question' })
+    const arrived = await questioning
+    assert.deepEqual(arrived, { sessionId: 'work-1', kind: 'question', timedOut: false, waited: true })
 
     const handler = h.listeners.get('user-questions/request')?.[0]
     assert.ok(handler)
-    handler({
+    void handler({
       agent: work,
       questions: [{ id: 'q1', question: '继续？' }],
       signal: new AbortController().signal,
     }, () => new Promise(() => {}))
-    const asked = await h.manager.wait(lead, 'work-1', 30, undefined)
-    assert.equal(asked.status, 'waiting')
-    assert.equal(asked.pendingQuestions, 1)
-    assert.equal(asked.waited, false)
+    const asked = await h.manager.wait(lead, 30, undefined)
+    assert.deepEqual(asked, { sessionId: 'work-1', kind: 'question', timedOut: false, waited: false })
+  } finally { h.cleanup() }
+})
+
+test('wait 在 goal 还会自己续时不把中间空闲当成没有消息', async () => {
+  const goal = { phase: 'active', activation: 'armed', roundsStarted: 1, maxGoalRounds: 4 }
+  const h = await setup({ goals: { get: () => goal } })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    let settled = false
+    const waiting = h.manager.wait(lead, 30, undefined).then(value => { settled = true; return value })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(settled, false)
+    h.manager.noteInbound({ sessionId: 'work-1', leadId: 'lead-1', kind: 'result' })
+    assert.deepEqual(await waiting, { sessionId: 'work-1', kind: 'result', timedOut: false, waited: true })
   } finally { h.cleanup() }
 })
 

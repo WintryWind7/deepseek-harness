@@ -81,17 +81,19 @@ export function apply(ctx) {
       const caller = lead(exec)
       return manager().setSessionModel(caller, requiredText(args.session_id, 'session_id'), modelSelection(args, true), exec.signal)
     }, value => `已改 ${value.sessionId} 的下一次请求：${value.provider}/${value.model}，强度 ${value.reasoningEffort}。正在跑的轮次不受影响。`),
-    tool('wait_session', '仅当用户明确要求使用本工具时调用。不要因为任务很长、开了 goal，或要等上一个会话做完，就自行调用。用户要求使用时，通常是 goal 正在推进、这一阶段用户不参与、工作会话要跑很久：在本轮里等到那一轮空闲，避免本轮结束后被再次唤起空转。已经空闲会立刻返回。它停在提问上时提前返回，这时用 reply_question。超时不报错。等的是这一轮，不是整个任务。', {
-      session_id: { type: 'string', description: '你管理的根会话 id。' },
+    tool('wait_session', '仅当用户明确要求使用本工具时调用。不要因为任务很长、开了 goal，或要等某个会话做完，就自行调用。不指定会话：在你管理的会话里，谁先把一轮结果或一个提问送进来，就返回谁。已经有待答提问，或眼下没有会发来消息的会话，会立刻返回。goal 还会自己续的中间轮次不算消息。超时不报错。正文仍由原来的回传送入，不在这个结果里重复。', {
       timeout_seconds: { type: 'integer', minimum: 1, maximum: 3600, description: '等待上限，1 至 3600 的整数秒。' },
-    }, ['session_id', 'timeout_seconds'], (args, exec) => manager().wait(lead(exec), requiredText(args.session_id, 'session_id'), args.timeout_seconds, exec.signal),
-    value => value.timedOut
-      ? `等待超时，会话 ${value.sessionId} 仍在运行。`
-      : value.status === 'waiting'
-        ? `会话 ${value.sessionId} 有 ${value.pendingQuestions} 个待答问题。用 reply_question 回答，不要继续干等。`
-        : value.waited
-          ? `会话 ${value.sessionId} 这一轮已结束，现在空闲。这不代表整个任务完成。`
-          : `会话 ${value.sessionId} 现在空闲，没有在跑的轮次。`),
+    }, ['timeout_seconds'], (args, exec) => manager().wait(lead(exec), args.timeout_seconds, exec.signal),
+    value => {
+      if (value.timedOut) return '等待超时，这段时间没有受管理会话把新消息送进来。'
+      if (value.kind === 'question') {
+        return value.waited
+          ? `会话 ${value.sessionId} 发来提问。用 reply_question 回答。正文已送入本会话。`
+          : `会话 ${value.sessionId} 已有待答问题。用 reply_question 回答，不要继续干等。`
+      }
+      if (value.kind === 'result') return `会话 ${value.sessionId} 发来一轮结果。正文已送入本会话。这不代表整个任务完成。`
+      return value.waited ? '受管理会话都已停下，没有新消息。' : '现在没有在跑、待答或即将回传的受管理会话。'
+    }),
     tool('continue_session', '给已有根会话发送下一条消息，必要时恢复它。只有纳入管理的会话才会自动回传结果；回答待答问题用 reply_question。', {
       session_id: { type: 'string', description: '目标根会话 id。' },
       message: { type: 'string', description: '下一条任务或补充指令。' },

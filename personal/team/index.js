@@ -90,6 +90,13 @@ export function createManager(ctx, config) {
   }
   /** 等待工具要马上看到状态变化；面板通知仍走下面的合并窗口。 */
   const activityListeners = new Set()
+  /** 一条结果或提问真正 followup 进 Lead 之后才通知。调用前已经送出的不重放。 */
+  const inboundWaiters = new Set()
+  const noteInbound = (notice) => {
+    for (const waiter of inboundWaiters) {
+      try { waiter(notice) } catch (error) { ctx.logger.warn('团队等待通知失败：%s', error.message) }
+    }
+  }
   const changed = () => {
     for (const listener of activityListeners) {
       try { listener() } catch (error) { ctx.logger.warn('团队等待通知失败：%s', error.message) }
@@ -318,6 +325,7 @@ export function createManager(ctx, config) {
         form: 'notice',
         summary: `${title} 第 ${result.turn} 轮 · ${result.reason}`,
       }))
+      noteInbound({ sessionId: id, leadId: row.leadId, kind: 'result' })
     }
     if (!await ctx.sessions.flush(lead.session)) throw new Error('Lead 的结果收据未持久化')
     if (records.get(id)?.generation !== row.generation) return
@@ -377,7 +385,11 @@ export function createManager(ctx, config) {
       changed()
     })
     deliveries.set(id, operation)
-    track(operation).then(() => { if (deliveries.get(id) === operation) deliveries.delete(id) })
+    track(operation).then(() => {
+      if (deliveries.get(id) === operation) deliveries.delete(id)
+      // 没发出新消息时，等待中的 Lead 要看到“已经没有在途回传”。
+      changed()
+    })
   }
 
   /** 读槽位：登记在册且仍然存在的 Lead。 */
@@ -442,7 +454,7 @@ export function createManager(ctx, config) {
   }
 
   const manager = {
-    config, track, changed, assertLead, becomeLead, ensureAgent,
+    config, track, changed, noteInbound, assertLead, becomeLead, ensureAgent,
     owner: id => records.get(id),
     async load() {
       const corpus = await ctx.sessionQuery.listSessions(shutdown.signal)
@@ -606,29 +618,30 @@ export function createManager(ctx, config) {
       return { sessionId: id, ...installed.selected }
     },
     /**
-     * 等到受管理会话这一轮回到空闲，或超时。已空闲立刻返回；有待答问题提前返回，
-     * 好让 Lead 去 reply_question。超时不抛错。
-     * @param {any} lead @param {string} id @param {number} timeout @param {AbortSignal | undefined} signal
+     * 等到这个 Lead 名下第一个新消息，或超时。消息是真正送进 Lead 的一轮结果或一次提问。
+     * 已经有待答提问，或眼下没有会再发来消息的会话时立刻返回。超时不抛错。
+     * @param {any} lead @param {number} timeout @param {AbortSignal | undefined} signal
      */
-    wait(lead, id, timeout, signal) {
+    wait(lead, timeout, signal) {
       assertLead(lead)
-      const record = records.get(id)
-      if (!record || record.leadId !== lead.id) throw new Error(`会话 ${id} 不在这个 Lead 的管理范围`)
       if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 3600) throw new Error('timeout_seconds 必须是 1 至 3600 的整数')
-      const queued = agent => {
-        const inbox = agent?.inbox
-        if (!inbox) return 0
-        return (inbox.nextTurn?.length ?? 0) + (inbox.nextStep?.length ?? 0)
+      const managedIds = () => [...records.entries()].filter(([, row]) => row.leadId === lead.id).map(([id]) => id)
+      const firstPending = () => managedIds().find(id => (questions?.count(id) ?? 0) > 0)
+      const queued = agent => (agent?.inbox?.nextTurn?.length ?? 0) + (agent?.inbox?.nextStep?.length ?? 0)
+      // goal 还会自己续时，中间空闲不是停止，也不能当成没有消息。
+      const willContinue = id => {
+        const agent = ctx.agents.get(id)
+        const goals = ctx.get('goals')
+        if (!agent || typeof goals?.get !== 'function') return false
+        try { return goalWillContinue(goals.get(agent), undefined) } catch { return false }
       }
-      const activity = () => {
+      const needsWait = () => managedIds().some(id => {
         const live = ctx.agents.get(id)
-        const pending = live ? questions?.count(id) ?? 0 : 0
-        if (pending > 0) return { status: 'waiting', pendingQuestions: pending }
-        if (live?.status === 'running' || queued(live) > 0) return { status: 'running', pendingQuestions: 0 }
-        return { status: 'idle', pendingQuestions: 0 }
-      }
-      const initial = activity()
-      if (initial.status !== 'running') return { sessionId: id, ...initial, timedOut: false, waited: false }
+        return live?.status === 'running' || queued(live) > 0 || deliveries.has(id) || willContinue(id)
+      })
+      const pendingNow = firstPending()
+      if (pendingNow !== undefined) return { sessionId: pendingNow, kind: 'question', timedOut: false, waited: false }
+      if (!needsWait()) return { kind: 'none', timedOut: false, waited: false }
       const linked = signalFor(signal)
       return new Promise((resolve, reject) => {
         let settled = false
@@ -636,21 +649,31 @@ export function createManager(ctx, config) {
           if (settled) return
           settled = true
           clearTimeout(timer)
-          unsubscribe()
+          inboundWaiters.delete(onInbound)
+          activityListeners.delete(tick)
           linked.removeEventListener('abort', onAbort)
           if (error) reject(error)
           else resolve(value)
         }
+        const onInbound = (notice) => {
+          if (notice.leadId !== lead.id || records.get(notice.sessionId)?.leadId !== lead.id) return
+          finish({ sessionId: notice.sessionId, kind: notice.kind, timedOut: false, waited: true })
+        }
         const tick = () => {
-          const snap = activity()
-          if (snap.status !== 'running') finish({ sessionId: id, ...snap, timedOut: false, waited: true })
+          const pending = firstPending()
+          if (!needsWait()) {
+            finish(pending === undefined
+              ? { kind: 'none', timedOut: false, waited: true }
+              : { sessionId: pending, kind: 'question', timedOut: false, waited: true })
+          }
         }
         const onAbort = () => finish(null, linked.reason instanceof Error ? linked.reason : new Error('等待已取消'))
         const timer = setTimeout(() => {
-          const snap = activity()
-          finish({ sessionId: id, ...snap, timedOut: snap.status === 'running', waited: true })
+          const pending = firstPending()
+          if (pending !== undefined) finish({ sessionId: pending, kind: 'question', timedOut: false, waited: true })
+          else finish({ kind: 'none', timedOut: needsWait(), waited: true })
         }, timeout * 1000)
-        const unsubscribe = () => activityListeners.delete(tick)
+        inboundWaiters.add(onInbound)
         activityListeners.add(tick)
         if (linked.aborted) onAbort()
         else linked.addEventListener('abort', onAbort, { once: true })

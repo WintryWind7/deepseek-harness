@@ -67,6 +67,7 @@ export function createQuestions(ctx, manager, historyLimit) {
         && waiter.forwardedGeneration !== record.generation) {
         lead.followup(userMessage(formatQuestions(id, waiter.questions)))
         waiter.forwardedGeneration = record.generation
+        manager.noteInbound?.({ sessionId: id, leadId: record.leadId, kind: 'question' })
       }
     }).catch(error => {
       ctx.logger.warn('问题无法送给 Lead：%s', error.message)
