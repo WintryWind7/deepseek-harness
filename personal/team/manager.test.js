@@ -335,6 +335,35 @@ test('wait 不指定会话：没人会发消息就立刻返回，否则等第一
   } finally { h.cleanup() }
 })
 
+test('reply_question 先答时只取消弹窗信号，不取消工具自己的信号', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    const handler = h.listeners.get('user-questions/request')?.[0]
+    assert.ok(handler)
+    const outer = new AbortController()
+    const request = {
+      agent: work,
+      questions: [{ id: 'q1', question: '继续？' }],
+      signal: outer.signal,
+    }
+    const answered = handler(request, () => new Promise(() => {}))
+    assert.notEqual(request.signal, outer.signal)
+    assert.equal(request.signal.aborted, false)
+    assert.deepEqual(
+      h.manager.reply(lead, { session_id: 'work-1', answers: [{ id: 'q1', selected: [], custom: '好' }] }),
+      { delivered: true },
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(request.signal.aborted, true)
+    assert.equal(outer.signal.aborted, false)
+    assert.deepEqual(await answered, { answers: [{ id: 'q1', selected: [], custom: '好' }] })
+  } finally { h.cleanup() }
+})
+
 test('wait 在 goal 还会自己续时不把中间空闲当成没有消息', async () => {
   const goal = { phase: 'active', activation: 'armed', roundsStarted: 1, maxGoalRounds: 4 }
   const h = await setup({ goals: { get: () => goal } })

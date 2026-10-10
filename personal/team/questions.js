@@ -82,7 +82,15 @@ export function createQuestions(ctx, manager, historyLimit) {
     try { assertRoot(agent.session.header, ctx) } catch (error) { return next() }
     const record = manager.owner(agent.id)
     const { questions } = request
-    const { waiter, promise } = wait(agent.id, questions, request.signal)
+    const outer = request.signal
+    // 弹窗听的是请求上的 signal。换成一条链接信号：工具自己的取消仍会关弹窗，
+    // Lead 先答时只中止这条链接，不中止工作会话的工具信号。
+    const dismiss = new AbortController()
+    const onOuterAbort = () => { dismiss.abort(outer?.reason) }
+    if (outer?.aborted) dismiss.abort(outer.reason)
+    else outer?.addEventListener('abort', onOuterAbort, { once: true })
+    request.signal = dismiss.signal
+    const { waiter, promise } = wait(agent.id, questions, outer)
     const leadWait = promise.then(answer => ({ from: 'lead', answer })).catch(error => ({ from: 'lead', error }))
     const userWait = Promise.resolve().then(() => next()).then(answer => {
       // 在用户回调实际完成时释放竞争者，避免恢复 Lead 的延迟改变先后顺序。
@@ -90,8 +98,10 @@ export function createQuestions(ctx, manager, historyLimit) {
       waiter.release()
       return { from: 'user', answer }
     }).catch(error => { waiter.release(); return { from: 'user', error } })
-    if (record) notify(agent.id, waiter, record, request.signal)
+    if (record) notify(agent.id, waiter, record, outer)
     return Promise.race([userWait, leadWait]).then(async winner => {
+      outer?.removeEventListener('abort', onOuterAbort)
+      if (winner.from === 'lead' && winner.answer != null && winner.error === undefined) dismiss.abort()
       if (winner.from === 'lead' && (winner.answer === null || winner.error)) winner = await userWait
       if (winner.error) throw winner.error
       return winner.answer

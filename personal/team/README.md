@@ -40,7 +40,7 @@ Lead 用 `continue_session` 发下一句话，用 `read_session` 主动读状态
 
 ## 提问
 
-受管理会话调用 `ask_user_question` 时弹窗照常出现，问题也送进 Lead 会话。Lead 用 `reply_question` 按问题 id 回答，**先回答者生效**；用户先答时，Lead 的迟到回答会带出用户答案。正在等回答时不要用 `continue_session` 代替。
+受管理会话调用 `ask_user_question` 时弹窗照常出现，问题也送进 Lead 会话。Lead 用 `reply_question` 按问题 id 回答，**先回答者生效**。Lead 先答时用户弹窗会关掉，不用再手动关闭；用户先答时，Lead 的迟到回答会带出用户答案。正在等回答时不要用 `continue_session` 代替。
 
 Host 启动后已出现、尚未回答的普通根会话问题，在纳入管理时也会转给 Lead。
 

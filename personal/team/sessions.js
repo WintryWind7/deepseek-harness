@@ -124,7 +124,7 @@ export function apply(ctx) {
       turn: { type: 'integer', minimum: 1, description: '指定已结束的轮次；省略时读取最近的真实结束轮次。' },
       offset: { type: 'integer', minimum: 0, maximum: 10000000, description: '结果正文的字符起点，默认 0；使用返回的 nextOffset 继续读取。' },
     }, ['session_id'], (args, exec) => manager().read(lead(exec), args, exec.signal)),
-    tool('reply_question', '回答你管理的根会话正在提出的问题。用户弹窗保持可用，先回答者生效；用户已答时返回用户答案。', {
+    tool('reply_question', '回答你管理的根会话正在提出的问题。用户弹窗保持可用，先回答者生效。你先答时用户弹窗会关掉；用户已答时返回用户答案。', {
       session_id: { type: 'string', description: '正在提问的根会话 id。' },
       answers: {
         type: 'array', minItems: 1, items: {
