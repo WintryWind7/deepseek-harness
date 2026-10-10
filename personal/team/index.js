@@ -618,6 +618,24 @@ export function createManager(ctx, config) {
       return { sessionId: id, ...installed.selected }
     },
     /**
+     * 停止一个本工作目录根会话的当前轮，并留下排队消息。和界面上的停止按钮相同。
+     * 没在本进程运行的会话不会被拉起来。
+     * @param {any} lead @param {string} id
+     * @returns {{sessionId: string, stopped: boolean}}
+     */
+    stopSession(lead, id) {
+      assertLead(lead)
+      if (id === lead.id) throw new Error('不能停止 Lead 自己')
+      const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+      const live = ctx.agents.get(id)
+      if (!live) return { sessionId: id, stopped: false }
+      assertRoot(live.session.header, ctx)
+      if (live.session.header.cwd !== cwd) throw new Error(`会话 ${id} 不在本工作区 ${cwd}`)
+      if (live.status !== 'running') return { sessionId: id, stopped: false }
+      live.cancel({ kind: 'user' }, { keepInbox: true })
+      return { sessionId: id, stopped: true }
+    },
+    /**
      * 等到这个 Lead 名下第一个新消息，或超时。消息是真正送进 Lead 的一轮结果或一次提问。
      * 已经有待答提问，或眼下没有会再发来消息的会话时立刻返回。超时不抛错。
      * @param {any} lead @param {number} timeout @param {AbortSignal | undefined} signal

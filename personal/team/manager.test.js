@@ -288,6 +288,28 @@ test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未�
   } finally { bare.cleanup() }
 })
 
+test('stopSession 只停当前轮并留下排队，拒绝 Lead 自己和跨目录，不拉起冷会话', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const other = h.add('work-other', { agentPreset: 'main-dev', cwd: join(h.cwd, '..', 'somewhere-else') })
+    const cancels = []
+    work.cancel = (cause, options) => { cancels.push({ cause, options }) }
+    other.cancel = () => { throw new Error('不应停止别的工作区') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    assert.deepEqual(h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: false })
+    work.status = 'running'
+    assert.deepEqual(h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: true })
+    assert.deepEqual(cancels, [{ cause: { kind: 'user' }, options: { keepInbox: true } }])
+    assert.throws(() => h.manager.stopSession(lead, 'lead-1'), /不能停止 Lead 自己/)
+    other.status = 'running'
+    assert.throws(() => h.manager.stopSession(lead, 'work-other'), /不在本工作区/)
+    assert.deepEqual(h.manager.stopSession(lead, 'missing'), { sessionId: 'missing', stopped: false })
+    assert.equal(cancels.length, 1)
+  } finally { h.cleanup() }
+})
+
 test('wait 不指定会话：没人会发消息就立刻返回，否则等第一条结果或提问', async () => {
   const h = await setup()
   try {

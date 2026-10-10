@@ -105,6 +105,12 @@ export function apply(ctx) {
       agent.steer(userMessage(message))
       return { sessionId: id, managed: manager().owner(id)?.leadId === exec.agent.id }
     }, value => `消息已插入根会话：${value.sessionId}。对方正在跑时，当前这一步结束后就能看到，不等这轮结束。${value.managed ? '每轮结束结果会回传给你。' : '该会话不在你的管理范围，结果不会自动回传给你。'}`),
+    tool('stop_session', '停止一个本工作目录根会话的当前轮。排队消息留下。正在跑的 goal 会暂停。不删除会话，也不移出管理。不能停 Lead 自己。对方没在跑时直接说明，不会把它拉起来。', {
+      session_id: { type: 'string', description: '要停止的根会话 id。' },
+    }, ['session_id'], (args, exec) => manager().stopSession(lead(exec), requiredText(args.session_id, 'session_id')),
+    value => value.stopped
+      ? `已停止会话 ${value.sessionId} 的当前轮。排队消息还在。`
+      : `会话 ${value.sessionId} 当前没有在跑。`),
     tool('manage_session', '将已有根会话纳入或移出你的管理。纳入后回传后续每轮结果并转发提问；移出不停止、不删除会话。', {
       session_id: { type: 'string', description: '目标根会话 id，可先用 list_sessions 查找。' },
       action: { type: 'string', enum: ['add', 'remove'], description: 'add 纳入，remove 移出。' },
