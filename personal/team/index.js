@@ -1,7 +1,7 @@
 /** 团队管理的 Host：管理关系、轮次结果投递和面板共用同一个实例。 */
 import { randomUUID } from 'node:crypto'
 import {
-  adoptMembers, assertRoot, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
+  adoptMembers, assertRoot, goalWillContinue, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
   observe, presetIdOf, readRecords, readStored, requiredText, restoredModel, titleText, turnResult,
   updateLead, updateRecord, userMessage, writeTeam,
 } from './runtime.js'
@@ -353,6 +353,20 @@ export function createManager(ctx, config) {
     }
   }
 
+  /** 本轮结束后驱动还会自己续。读不到 goal 时不当成会续，免得把最后一轮吞掉。 */
+  const goalContinues = (session, reasonKind) => {
+    const agent = ctx.agents.get(session.id)
+    const goals = ctx.get('goals')
+    if (!agent || typeof goals?.get !== 'function') return false
+    try { return goalWillContinue(goals.get(agent), reasonKind) }
+    catch { return false }
+  }
+  /** 跳过这一轮的回传，只推进投递起点。 */
+  const skipTurn = (id, endSeq) => {
+    const row = records.get(id)
+    if (!row || !Number.isSafeInteger(endSeq) || row.afterSeq >= endSeq) return
+    save(id, { ...row, afterSeq: endSeq })
+  }
   const queue = id => {
     if (!records.has(id) || closed) return
     const previous = deliveries.get(id) ?? Promise.resolve()
@@ -681,7 +695,12 @@ export function createManager(ctx, config) {
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     onEvent(session, event) {
-      if (event.type === 'turn/end' && records.has(session.id)) queue(session.id)
+      if (event.type === 'turn/end' && records.has(session.id)) {
+        // goal 会先回到空闲再立刻开下一轮。这种一轮不回传，但要把投递起点推过去，
+        // 否则等它真正停下时，catchUp 会把中间轮次补发给 Lead。
+        if (goalContinues(session, event.data?.reason?.kind)) skipTurn(session.id, event.seq)
+        else queue(session.id)
+      }
       if (['turn/start', 'turn/end', 'assistant/message', 'tool/call', 'tool/result', 'session/title', 'agent-preset/selected'].includes(event.type)) changed()
     },
     onAgent(agent) {

@@ -115,6 +115,22 @@ export function modelSelection(args, required) {
 }
 
 /**
+ * 这一轮结束后，goal 驱动会不会自己开下一轮。
+ * 驱动是先把会话放回空闲，再马上 followup；空闲本身不能当停止。
+ * `max-tokens` 会解除武装，`aborted` 会暂停或解除武装，这两种都不会再续。
+ * 轮数在本轮开头就已经计入，所以这里用「已经跑过的轮数还没到上限」。
+ * @param {any} goal 实时 goal 视图；没有 goal 时传 undefined
+ * @param {string | undefined} reasonKind 本轮 turn/end 的 reason.kind
+ * @returns {boolean}
+ */
+export function goalWillContinue(goal, reasonKind) {
+  if (reasonKind === 'max-tokens' || reasonKind === 'aborted') return false
+  if (!goal || goal.phase !== 'active' || goal.activation !== 'armed') return false
+  if (!Number.isSafeInteger(goal.roundsStarted) || !Number.isSafeInteger(goal.maxGoalRounds)) return false
+  return goal.roundsStarted < goal.maxGoalRounds
+}
+
+/**
  * 手写一条 user 角色的消息。source 决定它在聊天里怎么渲染：默认 `user` 是用户气泡。
  * @param {string} text @param {string} [id] @param {object} [source] @returns {object}
  */

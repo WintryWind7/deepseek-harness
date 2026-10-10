@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
-  adoptMembers, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, readRecords, titleText, updateLead,
+  adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, readRecords, titleText, updateLead,
   updateRecord, writeTeam,
 } from './runtime.js'
 
@@ -177,4 +177,15 @@ test('modelSelection 要么三项一起给，要么在可选时全部省略', ()
   assert.throws(() => modelSelection({ model: 'm' }, false), /必须一起给出/)
   assert.throws(() => modelSelection({}, true), /必须一起给出/)
   assert.throws(() => modelSelection({ provider: ' ', model: 'm', reasoning_effort: 'high' }, true), /provider/)
+})
+
+test('goalWillContinue 只在还会自动续轮时为真', () => {
+  const armed = { phase: 'active', activation: 'armed', roundsStarted: 2, maxGoalRounds: 4 }
+  assert.equal(goalWillContinue(armed, 'completed'), true)
+  assert.equal(goalWillContinue({ ...armed, roundsStarted: 4 }, 'completed'), false)
+  assert.equal(goalWillContinue({ ...armed, phase: 'complete' }, 'completed'), false)
+  assert.equal(goalWillContinue({ ...armed, activation: 'disarmed' }, 'completed'), false)
+  assert.equal(goalWillContinue(armed, 'max-tokens'), false)
+  assert.equal(goalWillContinue(armed, 'aborted'), false)
+  assert.equal(goalWillContinue(undefined, 'completed'), false)
 })

@@ -40,6 +40,7 @@ async function setup(options = {}) {
     get: name => {
       if (name === 'workspaceRegistry') return { archivedSessionIds: [] }
       if (name === 'sessionController') return options.sessionController
+      if (name === 'goals') return options.goals
       if (name === 'userQuestions') {
         return {
           ask: async request => {
@@ -319,5 +320,30 @@ test('wait 对空闲立刻返回，跑起来后等到空闲，提问则提前返
     assert.equal(asked.status, 'waiting')
     assert.equal(asked.pendingQuestions, 1)
     assert.equal(asked.waited, false)
+  } finally { h.cleanup() }
+})
+
+test('goal 还会自己续时只推进投递起点，停下后才走回传', async () => {
+  const goal = { phase: 'active', activation: 'armed', roundsStarted: 1, maxGoalRounds: 4 }
+  const h = await setup({ goals: { get: () => goal } })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    assert.equal(readRecords(h.cwd).sessions['work-1'].afterSeq, 99)
+    h.manager.onEvent(
+      { id: 'work-1' },
+      { type: 'turn/end', seq: 120, data: { reason: { kind: 'completed' }, turn: 2 } },
+    )
+    assert.equal(readRecords(h.cwd).sessions['work-1'].afterSeq, 120)
+    goal.phase = 'complete'
+    h.manager.onEvent(
+      { id: 'work-1' },
+      { type: 'turn/end', seq: 140, data: { reason: { kind: 'completed' }, turn: 3 } },
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    // 回传路径会去读日志；假 ctx 没有持久化，所以起点停在上一轮。
+    assert.equal(readRecords(h.cwd).sessions['work-1'].afterSeq, 120)
   } finally { h.cleanup() }
 })
