@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { formatQuestions } from './questions.js'
 import {
   adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, mountPreset, readRecords, titleText, updateLead,
   updateRecord, writeTeam,
@@ -188,6 +189,16 @@ test('goalWillContinue 只在还会自动续轮时为真', () => {
   assert.equal(goalWillContinue(armed, 'max-tokens'), false)
   assert.equal(goalWillContinue(armed, 'aborted'), false)
   assert.equal(goalWillContinue(undefined, 'completed'), false)
+})
+
+test('提问通知带上工具前的正文，没有正文时不另起一段', () => {
+  const question = [{ id: 'q1', question: '用哪一种？', options: [{ label: '甲', description: '现有接口' }] }]
+  const withBody = formatQuestions('session-1', question, { text: '方案：改导出。', truncated: true })
+  assert.match(withBody, /提问前的正文：\n方案：改导出。/)
+  assert.match(withBody, /正文已截断/)
+  assert.match(withBody, /问题 id：q1/)
+  const bare = formatQuestions('session-1', question, null)
+  assert.equal(bare.includes('提问前的正文'), false)
 })
 
 test('mountPreset 等绑定完成，不把预设身份交给工厂的 commit', async () => {

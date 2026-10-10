@@ -484,7 +484,7 @@ export function createManager(ctx, config) {
     },
     start() {
       shutdown.signal.throwIfAborted()
-      questions = createQuestions(ctx, manager, config.questionHistoryLimit)
+      questions = createQuestions(ctx, manager, config.questionHistoryLimit, config.resultChars)
       for (const id of records.keys()) queue(id)
     },
     async manage(lead, id, action, signal) {

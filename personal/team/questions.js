@@ -1,17 +1,24 @@
 /** 受管理根会话的提问保留用户弹窗，并允许所属 Lead 竞争回答。 */
-import { assertRoot, requiredText, userMessage } from './runtime.js'
+import { assertRoot, latestMessage, requiredText, userMessage } from './runtime.js'
 
 /** @param {any} answer @returns {string} */
 function formatAnswer(answer) {
   return (answer?.answers ?? []).map(row => `${row.id}：${[...(row.selected ?? []), row.custom ?? ''].filter(Boolean).join('；')}`).join('\n')
 }
 
-/** @param {string} id @param {readonly any[]} questions @returns {string} */
-function formatQuestions(id, questions) {
+/**
+ * 提问通知。`prior` 是这一步里、工具调用之外的正文；助手消息在执行工具前已经写入。
+ * @param {string} id @param {readonly any[]} questions @param {{text: string, truncated: boolean} | null} [prior] @returns {string}
+ */
+export function formatQuestions(id, questions, prior) {
   const lines = [
     `受管理根会话 ${id} 正在提问。用户弹窗仍在，你和用户谁先回答谁算。`,
     '用 reply_question 回答，不要用 continue_session。每个问题一条答案；selected 填选项原文，自由文本用 custom。',
   ]
+  if (prior?.text) {
+    lines.push('', '提问前的正文：', prior.text)
+    if (prior.truncated) lines.push('（正文已截断。这一轮还没结束，read_session 读不到这段未结束的正文。）')
+  }
   for (const row of questions) {
     lines.push('', `问题 id：${row.id}`, ...(row.header ? [`标题：${row.header}`] : []), row.question)
     for (const option of row.options ?? []) lines.push(`- ${option.label}${option.description ? `：${option.description}` : ''}`)
@@ -20,8 +27,18 @@ function formatQuestions(id, questions) {
   return lines.join('\n')
 }
 
-/** @param {any} ctx @param {any} manager @param {number} historyLimit @returns {any} */
-export function createQuestions(ctx, manager, historyLimit) {
+/** 取刚写入的助手正文。此时工具还没跑完，这段文字可能尚未刷到磁盘。 @param {any} agent @param {number} limit @returns {any} */
+function priorText(agent, limit) {
+  try {
+    const events = agent?.session?.snapshotEvents?.()
+    return Array.isArray(events) ? latestMessage(events, limit) : null
+  } catch {
+    return null
+  }
+}
+
+/** @param {any} ctx @param {any} manager @param {number} historyLimit @param {number} resultChars @returns {any} */
+export function createQuestions(ctx, manager, historyLimit, resultChars) {
   const pending = new Map()
   const answered = new Map()
 
@@ -65,7 +82,7 @@ export function createQuestions(ctx, manager, historyLimit) {
     const operation = manager.ensureAgent(record.leadId, signal).then(lead => {
       if (pending.get(id)?.includes(waiter) && manager.owner(id)?.generation === record.generation
         && waiter.forwardedGeneration !== record.generation) {
-        lead.followup(userMessage(formatQuestions(id, waiter.questions)))
+        lead.followup(userMessage(formatQuestions(id, waiter.questions, waiter.prior)))
         waiter.forwardedGeneration = record.generation
         manager.noteInbound?.({ sessionId: id, leadId: record.leadId, kind: 'question' })
       }
@@ -91,6 +108,7 @@ export function createQuestions(ctx, manager, historyLimit) {
     else outer?.addEventListener('abort', onOuterAbort, { once: true })
     request.signal = dismiss.signal
     const { waiter, promise } = wait(agent.id, questions, outer)
+    waiter.prior = priorText(agent, resultChars)
     const leadWait = promise.then(answer => ({ from: 'lead', answer })).catch(error => ({ from: 'lead', error }))
     const userWait = Promise.resolve().then(() => next()).then(answer => {
       // 在用户回调实际完成时释放竞争者，避免恢复 Lead 的延迟改变先后顺序。
