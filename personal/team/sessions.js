@@ -111,6 +111,12 @@ export function apply(ctx) {
     value => value.stopped
       ? `已停止会话 ${value.sessionId} 的当前轮。排队消息还在。`
       : `会话 ${value.sessionId} 当前没有在跑。`),
+    tool('archive_session', '归档一个本工作目录的根会话。它会从团队列表里消失，会话文件还在，可在界面上取消归档。还在跑时拒绝且不归档，需先用 stop_session。不能归档 Lead 自己。不移出管理记录。', {
+      session_id: { type: 'string', description: '要归档的根会话 id。' },
+    }, ['session_id'], (args, exec) => manager().archiveSession(lead(exec), requiredText(args.session_id, 'session_id'), exec.signal),
+    value => value.already
+      ? `会话 ${value.sessionId} 已经归档。`
+      : `已归档会话 ${value.sessionId}。它不再出现在团队列表里，会话还在，可在界面上取消归档。`),
     tool('manage_session', '将已有根会话纳入或移出你的管理。纳入后回传后续每轮结果并转发提问；移出不停止、不删除会话。', {
       session_id: { type: 'string', description: '目标根会话 id，可先用 list_sessions 查找。' },
       action: { type: 'string', enum: ['add', 'remove'], description: 'add 纳入，remove 移出。' },

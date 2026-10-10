@@ -38,7 +38,7 @@ async function setup(options = {}) {
     },
     effect: () => {},
     get: name => {
-      if (name === 'workspaceRegistry') return { archivedSessionIds: [] }
+      if (name === 'workspaceRegistry') return options.workspaceRegistry ?? { archivedSessionIds: [] }
       if (name === 'sessionController') return options.sessionController
       if (name === 'goals') return options.goals
       if (name === 'userQuestions') {
@@ -307,6 +307,43 @@ test('stopSession 只停当前轮并留下排队，拒绝 Lead 自己和跨目�
     assert.throws(() => h.manager.stopSession(lead, 'work-other'), /不在本工作区/)
     assert.deepEqual(h.manager.stopSession(lead, 'missing'), { sessionId: 'missing', stopped: false })
     assert.equal(cancels.length, 1)
+  } finally { h.cleanup() }
+})
+
+test('archiveSession 拒绝还在跑的会话和 Lead 自己，空闲会话才写入归档', async () => {
+  const archived = []
+  const registry = {
+    archivedSessionIds: ['old'],
+    archiveSession: async id => { archived.push(id) },
+  }
+  const h = await setup({ workspaceRegistry: registry })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    h.add('work-other', { agentPreset: 'main-dev', cwd: join(h.cwd, '..', 'somewhere-else') })
+    h.addCold('old')
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(() => h.manager.archiveSession(lead, 'lead-1', undefined), /不能归档 Lead 自己/)
+    work.status = 'running'
+    await assert.rejects(() => h.manager.archiveSession(lead, 'work-1', undefined), /还在跑/)
+    assert.deepEqual(archived, [])
+    work.status = 'idle'
+    assert.deepEqual(await h.manager.archiveSession(lead, 'work-1', undefined), {
+      sessionId: 'work-1', archived: true, already: false,
+    })
+    assert.deepEqual(archived, ['work-1'])
+    await assert.rejects(() => h.manager.archiveSession(lead, 'work-other', undefined), /不在本工作区/)
+    assert.deepEqual(await h.manager.archiveSession(lead, 'old', undefined), {
+      sessionId: 'old', archived: true, already: true,
+    })
+    registry.archiveSession = async () => {
+      const error = new Error('active')
+      error.name = 'WorkspaceActiveSessionError'
+      error.activity = [{ kind: 'job' }]
+      throw error
+    }
+    await assert.rejects(() => h.manager.archiveSession(lead, 'work-1', undefined), /job/)
+    assert.deepEqual(archived, ['work-1'])
   } finally { h.cleanup() }
 })
 

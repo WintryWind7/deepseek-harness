@@ -636,6 +636,43 @@ export function createManager(ctx, config) {
       return { sessionId: id, stopped: true }
     },
     /**
+     * 归档一个本工作目录的根会话。还在跑就拒绝，不写入归档。不能归档 Lead 自己。
+     * @param {any} lead @param {string} id @param {AbortSignal | undefined} signal
+     * @returns {Promise<{sessionId: string, archived: true, already: boolean}>}
+     */
+    async archiveSession(lead, id, signal) {
+      assertLead(lead)
+      if (id === lead.id) throw new Error('不能归档 Lead 自己')
+      const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
+      const live = ctx.agents.get(id)
+      let header = live?.session.header
+      if (header === undefined) {
+        try {
+          header = await observe(ctx, id, signalFor(signal), snapshot => snapshot.header)
+        } catch (error) {
+          throw new Error(`找不到会话 ${id}：${error?.message ?? error}`)
+        }
+      }
+      assertRoot(header, ctx)
+      if (header.cwd !== cwd) throw new Error(`会话 ${id} 不在本工作区 ${cwd}`)
+      if (live?.status === 'running') throw new Error(`会话 ${id} 还在跑，没有归档。请先用 stop_session 停止当前轮`)
+      const registry = ctx.get('workspaceRegistry')
+      if (typeof registry?.archiveSession !== 'function') throw new Error('归档不可用')
+      if (isArchived(id)) return { sessionId: id, archived: true, already: true }
+      try {
+        await registry.archiveSession(id)
+      } catch (error) {
+        if (error?.name === 'WorkspaceActiveSessionError') {
+          const kinds = (error.activity ?? []).map(entry => entry.kind).filter(Boolean).join('、')
+          throw new Error(`会话 ${id} 还有工作在跑${kinds ? `（${kinds}）` : ''}，没有归档。请先用 stop_session 停止当前轮`)
+        }
+        if (error?.name === 'WorkspaceUnknownSessionError') throw new Error(`找不到会话 ${id}`)
+        throw error
+      }
+      changed()
+      return { sessionId: id, archived: true, already: false }
+    },
+    /**
      * 等到这个 Lead 名下第一个新消息，或超时。消息是真正送进 Lead 的一轮结果或一次提问。
      * 已经有待答提问，或眼下没有会再发来消息的会话时立刻返回。超时不抛错。
      * @param {any} lead @param {number} timeout @param {AbortSignal | undefined} signal
