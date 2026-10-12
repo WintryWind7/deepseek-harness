@@ -29,7 +29,7 @@ async function setup(options = {}) {
   const listeners = new Map()
   const ask = options.ask ?? (() => ['保持现状'])
   const ctx = {
-    logger: { warn() {}, info() {} },
+    logger: options.logger ?? { warn() {}, info() {} },
     on: (name, fn) => {
       const list = listeners.get(name) ?? []
       list.push(fn)
@@ -40,6 +40,8 @@ async function setup(options = {}) {
     get: name => {
       if (name === 'workspaceRegistry') return options.workspaceRegistry ?? { archivedSessionIds: [] }
       if (name === 'sessionController') return options.sessionController
+      if (name === 'llm') return options.llm
+      if (name === 'sessionTitle') return options.sessionTitle
       if (name === 'goals') return options.goals
       if (name === 'userQuestions') {
         return {
@@ -55,6 +57,8 @@ async function setup(options = {}) {
     },
     agents: { get: id => live.get(id), roots: () => [...live.values()] },
     sessions: { get: id => live.get(id)?.session, flush: async () => true },
+    sessionPersistence: options.sessionPersistence,
+    sessionProjections: options.sessionProjections,
     sessionQuery: {
       listSessions: async () => [...rows.values()],
       observeSession: async id => {
@@ -71,8 +75,8 @@ async function setup(options = {}) {
   const add = (id, extra = {}) => {
     const header = { id, cwd, origin: 'root', ...extra }
     const agent = {
-      id, status: 'idle', followup() {}, inbox: { nextTurn: [], nextStep: [] },
-      session: { header, seq: 100 },
+      id, status: 'idle', followup() {}, steer() {}, inbox: { nextTurn: [], nextStep: [] },
+      session: { id, header, seq: 100, requestHeader: () => ({ config: {} }) },
     }
     rows.set(id, { header, live: agent })
     live.set(id, agent)
@@ -256,6 +260,7 @@ test('面板成为 Lead 的准入：非 team-dev、受管理工作会话、Lead 
 test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未接入的控制器', async () => {
   const calls = []
   const h = await setup({
+    llm: { resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } }) },
     sessionController: {
       selectSessionModel: async request => {
         calls.push(request)
@@ -285,6 +290,71 @@ test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未�
       () => bare.manager.setSessionModel(lead, 'work-1', { provider: 'p', model: 'm', reasoningEffort: 'high' }, undefined),
       /会话模型选择不可用/,
     )
+  } finally { bare.cleanup() }
+})
+
+test('setSessionModel 对没有推理强度的模型把 off 换成不带该参数，别的强度直接报错', async () => {
+  const calls = []
+  const h = await setup({
+    llm: { resolveModelInfo: async () => ({ provider: 'p', id: 'm', name: 'M' }) },
+    sessionController: {
+      selectSessionModel: async request => {
+        calls.push(request)
+        return {
+          selected: {
+            provider: request.provider, model: request.model,
+            ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
+          },
+        }
+      },
+    },
+  })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    const installed = await h.manager.setSessionModel(lead, 'work-1', { provider: 'p', model: 'm', reasoningEffort: 'off' }, undefined)
+    // off 只对这类模型是“不带这个参数”，控制器收到的请求里没有 reasoningEffort。
+    assert.deepEqual(calls, [{ sessionId: 'work-1', provider: 'p', model: 'm' }])
+    assert.equal(installed.reasoningEffort, undefined)
+    await assert.rejects(
+      () => h.manager.setSessionModel(lead, 'work-1', { provider: 'p', model: 'm', reasoningEffort: 'high' }, undefined),
+      /不支持推理强度，reasoning_effort 传 off/,
+    )
+    assert.equal(calls.length, 1)
+  } finally { h.cleanup() }
+})
+
+test('listModels 列出可用模型且不改管理记录，非 Lead 或缺少目录时报错', async () => {
+  const catalog = {
+    default: { provider: 'deepseek', model: 'deepseek-chat' },
+    groups: [{
+      id: 'deepseek', name: 'DeepSeek',
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'high' }], defaultEffort: 'high' } }],
+    }],
+    failures: [],
+  }
+  const h = await setup({ sessionController: { modelCatalog: async () => catalog } })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const plain = h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(() => h.manager.listModels(plain, {}), /只由团队开发助手 Lead 调用/)
+    const shown = await h.manager.listModels(lead, {})
+    assert.equal(shown.providers, 1)
+    assert.equal(shown.models, 1)
+    assert.equal(shown.truncated, false)
+    assert.match(shown.text, /deepseek（DeepSeek）/)
+    assert.match(shown.text, /- deepseek-chat（DeepSeek Chat）：推理强度：high（默认 high）/)
+    assert.equal((await h.manager.listModels(lead, { provider: 'nope' })).models, 0)
+    // 只读：一次查询不写入任何成员记录。
+    assert.deepEqual(readRecords(h.cwd).sessions, {})
+  } finally { h.cleanup() }
+  const bare = await setup()
+  try {
+    const lead = bare.add('lead-1', { agentPreset: 'team-dev' })
+    await bare.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(() => bare.manager.listModels(lead, {}), /模型目录不可用/)
   } finally { bare.cleanup() }
 })
 
@@ -392,6 +462,116 @@ test('wait 不指定会话：没人会发消息就立刻返回，否则等第一
     const asked = await h.manager.wait(lead, 30, undefined)
     assert.deepEqual(asked, { sessionId: 'work-1', kind: 'question', timedOut: false, waited: false })
   } finally { h.cleanup() }
+})
+
+test('轮次结果插队进入 Lead 下一步，保留团队来源和正文', async () => {
+  const stored = new Map()
+  const delivered = Promise.withResolvers()
+  const h = await setup({
+    logger: { warn: (_format, error) => delivered.reject(new Error(error)), info() {} },
+    sessionPersistence: {
+      open: async id => {
+        const record = stored.get(id)
+        if (!record) throw new Error(`unknown stored session ${id}`)
+        return {
+          header: record.header,
+          read: async (offset, length) => ({
+            events: record.events.filter(event => event.seq >= offset && (length === undefined || event.seq < offset + length)),
+          }),
+          close: async () => {},
+        }
+      },
+    },
+    sessionProjections: { stateOf: () => undefined },
+  })
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const leadEvents = []
+    const workEvents = []
+    stored.set(lead.id, { header: lead.session.header, events: leadEvents })
+    stored.set(work.id, { header: work.session.header, events: workEvents })
+    const receive = (target, message) => {
+      const inbox = target === 'next-step' ? lead.inbox.nextStep : lead.inbox.nextTurn
+      const start = inbox.length
+      inbox.push(message)
+      leadEvents.push({
+        type: 'agent/inbox/spliced', seq: lead.session.seq++,
+        data: { target, start, deleteCount: 0, inserted: [message] },
+      })
+      delivered.resolve({ target, message })
+    }
+    lead.followup = message => receive('next-turn', message)
+    lead.steer = message => receive('next-step', message)
+    lead.status = 'running'
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct(work.id, 'add', work.id, undefined)
+    const end = { type: 'turn/end', seq: 102, data: { turn: 1, reason: { kind: 'completed' } } }
+    workEvents.push(
+      { type: 'turn/start', seq: 100, data: { turn: 1 } },
+      { type: 'assistant/message', seq: 101, data: { turn: 1, message: { content: [{ type: 'text', text: '截图已处理。' }] } } },
+      end,
+    )
+    work.session.seq = 103
+    h.manager.onEvent(work.session, end)
+    const { target, message } = await delivered.promise
+    assert.equal(target, 'next-step')
+    assert.equal(lead.inbox.nextTurn.length, 0)
+    assert.equal(lead.inbox.nextStep.length, 1)
+    assert.match(message.id, /^team-result:/)
+    assert.deepEqual(message.source, {
+      kind: 'team-message', form: 'notice', summary: 'work-1 第 1 轮 · completed',
+    })
+    assert.match(message.content[0].text, /第 1 轮已结束/)
+    assert.ok(message.content[0].text.endsWith('截图已处理。'))
+  } finally {
+    await h.manager.dispose()
+    h.cleanup()
+  }
+})
+
+test('提问以团队通知插队，保留提问前正文和选项，没有标题时用会话 id', async () => {
+  for (const title of ['文档助手', undefined]) {
+    const h = await setup({ sessionTitle: title === undefined ? undefined : { get: () => ({ title }) } })
+    try {
+      const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+      const work = h.add('work-1', { agentPreset: 'main-dev' })
+      const messages = []
+      const delivered = Promise.withResolvers()
+      let deliveryMethod
+      lead.followup = message => { deliveryMethod = 'followup'; messages.push(message); delivered.resolve() }
+      lead.steer = message => { deliveryMethod = 'steer'; messages.push(message); delivered.resolve() }
+      work.session.snapshotEvents = () => [{
+        type: 'assistant/message', seq: 99,
+        data: { turn: 1, message: { content: [{ type: 'text', text: '方案：保持已有截图。' }] } },
+      }]
+      await h.manager.becomeLead(lead, {}, undefined)
+      await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+      const handler = h.listeners.get('user-questions/request')?.[0]
+      assert.ok(handler)
+      const answered = handler({
+        agent: work,
+        questions: [{ id: 'q1', header: '下一步', question: '继续吗？', options: [{ label: '继续', description: '保留当前方案' }] }],
+        signal: new AbortController().signal,
+      }, () => new Promise(() => {}))
+      await delivered.promise
+      assert.equal(deliveryMethod, 'steer')
+      assert.equal(messages.length, 1)
+      assert.equal(messages[0].role, 'user')
+      assert.deepEqual(messages[0].source, {
+        kind: 'team-message', form: 'notice', summary: `${title ?? 'work-1'} 正在提问`,
+      })
+      assert.deepEqual(messages[0].content, [{ type: 'text', text: [
+        '受管理根会话 work-1 正在提问。用户弹窗仍在，你和用户谁先回答谁算。',
+        '用 reply_question 回答，不要用 continue_session。每个问题一条答案；selected 填选项原文，自由文本用 custom。',
+        '', '提问前的正文：', '方案：保持已有截图。',
+        '', '问题 id：q1', '标题：下一步', '继续吗？', '- 继续：保留当前方案',
+      ].join('\n') }])
+      const answers = [{ id: 'q1', selected: ['继续'] }]
+      assert.deepEqual(h.manager.reply(lead, { session_id: work.id, answers }), { delivered: true })
+      assert.deepEqual(await answered, { answers })
+    } finally { h.cleanup() }
+  }
 })
 
 test('reply_question 先答时只取消弹窗信号，不取消工具自己的信号', async () => {

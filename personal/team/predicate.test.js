@@ -11,8 +11,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { formatQuestions } from './questions.js'
 import {
-  adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelSelection, mountPreset, readRecords, titleText, updateLead,
-  updateRecord, writeTeam,
+  adoptMembers, goalWillContinue, isRoot, isVisibleRoot, liveLeadId, mapLimit, modelCatalogText, modelSelection, mountPreset,
+  normalizeEffort, readRecords, selectionLabel, titleText, updateLead, updateRecord, writeTeam,
 } from './runtime.js'
 
 const CWD = 'D:\\why\\deepseek-harness'
@@ -189,6 +189,75 @@ test('goalWillContinue 只在还会自动续轮时为真', () => {
   assert.equal(goalWillContinue(armed, 'max-tokens'), false)
   assert.equal(goalWillContinue(armed, 'aborted'), false)
   assert.equal(goalWillContinue(undefined, 'completed'), false)
+})
+
+test('modelCatalogText 列出提供方、模型、推理强度和读取失败', () => {
+  const catalog = {
+    default: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+    groups: [{
+      id: 'deepseek', name: 'DeepSeek',
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'off' }, { id: 'high' }], defaultEffort: 'high' } },
+        { id: 'plain', name: 'Plain' },
+      ],
+    }],
+    failures: [{ id: 'chattt', name: 'ChatTT', message: '连接超时' }],
+  }
+  const shown = modelCatalogText(catalog, {
+    current: { provider: 'chattt', model: 'grok-4.7', reasoningEffort: 'xhigh' },
+  })
+  assert.equal(shown.providers, 1)
+  assert.equal(shown.models, 2)
+  assert.equal(shown.truncated, false)
+  assert.equal(shown.text, [
+    '你当前的模型：chattt/grok-4.7（强度 xhigh）',
+    '账号默认模型：deepseek/deepseek-chat（强度 high）',
+    '当前可用 1 个提供方、2 个模型。',
+    '读取失败：chattt（ChatTT）：连接超时',
+    '',
+    'deepseek（DeepSeek）',
+    '- deepseek-chat（DeepSeek Chat）：推理强度：off、high（默认 high）',
+    '- plain（Plain）：不支持推理强度；指定它时 reasoning_effort 传 off',
+  ].join('\n'))
+})
+
+test('modelCatalogText 按 provider 只看一个提供方，没有时说明可以省略', () => {
+  const catalog = {
+    groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }],
+    failures: [{ id: 'chattt', name: 'ChatTT', message: '连接超时' }],
+  }
+  const one = modelCatalogText(catalog, { provider: 'deepseek' })
+  assert.equal(one.providers, 1)
+  assert.equal(one.models, 1)
+  assert.equal(one.text.includes('读取失败'), false)
+  assert.match(one.text, /提供方 deepseek 可用 1 个模型。/)
+  const none = modelCatalogText(catalog, { provider: 'nope' })
+  assert.equal(none.providers, 0)
+  assert.equal(none.models, 0)
+  assert.match(none.text, /没有提供方 nope。省略 provider 可以列出全部。/)
+})
+
+test('modelCatalogText 超出上限时截断，仍然报出总数', () => {
+  const models = Array.from({ length: 200 }, (_, index) => ({ id: `model-${index}`, name: `模型 ${index}` }))
+  const shown = modelCatalogText({ groups: [{ id: 'p', name: 'P', models }], failures: [] }, { limit: 1000 })
+  assert.equal(shown.truncated, true)
+  assert.equal(shown.models, 200)
+  assert.ok(shown.text.length <= 1000)
+  assert.ok(shown.text.endsWith('（已截断。要看得更全，用 provider 指定一个提供方。）'))
+})
+
+test('normalizeEffort 只把没有推理强度的模型的 off 换成不带该参数', () => {
+  const selection = { provider: 'p', model: 'm', reasoningEffort: 'high' }
+  const reasoning = { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' }
+  assert.equal(normalizeEffort({ reasoning }, selection), 'high')
+  assert.equal(normalizeEffort({ reasoning }, { ...selection, reasoningEffort: 'off' }), 'off')
+  assert.equal(normalizeEffort({}, { ...selection, reasoningEffort: 'off' }), undefined)
+  assert.throws(() => normalizeEffort({}, selection), /p\/m 不支持推理强度，reasoning_effort 传 off/)
+})
+
+test('selectionLabel 在没有推理强度时说明，不印出 undefined', () => {
+  assert.equal(selectionLabel({ provider: 'p', model: 'm', reasoningEffort: 'high' }), 'p/m，强度 high')
+  assert.equal(selectionLabel({ provider: 'p', model: 'm' }), 'p/m（该模型没有推理强度）')
 })
 
 test('提问通知带上工具前的正文，没有正文时不另起一段', () => {

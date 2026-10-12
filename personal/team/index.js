@@ -2,8 +2,8 @@
 import { randomUUID } from 'node:crypto'
 import {
   adoptMembers, assertRoot, goalWillContinue, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
-  mountPreset, observe, presetIdOf, readRecords, readStored, requiredText, restoredModel, titleText, turnResult,
-  updateLead, updateRecord, userMessage, writeTeam,
+  modelCatalogText, modelOptions, mountPreset, normalizeEffort, observe, presetIdOf, readRecords, readStored,
+  requiredText, restoredModel, titleText, turnResult, updateLead, updateRecord, userMessage, writeTeam,
 } from './runtime.js'
 import { createQuestions } from './questions.js'
 
@@ -90,7 +90,7 @@ export function createManager(ctx, config) {
   }
   /** 等待工具要马上看到状态变化；面板通知仍走下面的合并窗口。 */
   const activityListeners = new Set()
-  /** 一条结果或提问真正 followup 进 Lead 之后才通知。调用前已经送出的不重放。 */
+  /** 一条结果或提问真正送进 Lead 收件箱之后才通知。调用前已经送出的不重放。 */
   const inboundWaiters = new Set()
   const noteInbound = (notice) => {
     for (const waiter of inboundWaiters) {
@@ -320,7 +320,7 @@ export function createManager(ctx, config) {
       // 回传是机器送来的轮次结果，不是用户发言。`team-message` 是 ui-chat 已识别的
       // 来源（client/chat/turn-trigger.ts）：唤起空闲 Lead 时渲染成带「收到团队消息」
       // 标题与团队图标的通知卡，而不是用户气泡；`notice` 加 summary 给出折叠行摘要。
-      lead.followup(userMessage(heading + body.slice(0, room) + suffix, messageId, {
+      lead.steer(userMessage(heading + body.slice(0, room) + suffix, messageId, {
         kind: 'team-message',
         form: 'notice',
         summary: `${title} 第 ${result.turn} 轮 · ${result.reason}`,
@@ -594,6 +594,7 @@ export function createManager(ctx, config) {
     reply(lead, args) { assertLead(lead); return questions.reply(lead, args) },
     /**
      * 改一个本工作目录根会话的下一次模型请求。不改账号默认，也不打断正在跑的轮次。
+     * 模型没有推理强度时只能不带这个参数，团队工具约定传 `off`，这里把它换掉。
      * @param {any} lead @param {string} id @param {{provider: string, model: string, reasoningEffort: string}} selection
      * @param {AbortSignal | undefined} signal
      */
@@ -609,13 +610,30 @@ export function createManager(ctx, config) {
       const agent = live ?? await ensureAgent(id, signal)
       const controller = ctx.get('sessionController')
       if (!controller?.selectSessionModel) throw new Error('会话模型选择不可用')
+      const llm = ctx.get('llm')
+      if (typeof llm?.resolveModelInfo !== 'function') throw new Error('模型信息不可用')
+      const effort = normalizeEffort(await llm.resolveModelInfo(selection.provider, selection.model, signalFor(signal)), selection)
       const installed = await controller.selectSessionModel({
         sessionId: id,
         provider: selection.provider,
         model: selection.model,
-        reasoningEffort: selection.reasoningEffort,
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
       })
       return { sessionId: id, ...installed.selected }
+    },
+    /**
+     * 列出本进程当前可用的模型，供 Lead 填 `open_session` 与 `set_session_model` 的模型参数。
+     * 只读：不恢复、不修改任何会话，也不改账号默认模型。
+     * @param {any} lead @param {{provider?: string}} [args]
+     * @returns {Promise<{text: string, providers: number, models: number, truncated: boolean}>}
+     */
+    async listModels(lead, args = {}) {
+      assertLead(lead)
+      const provider = args.provider === undefined ? undefined : requiredText(args.provider, 'provider')
+      const controller = ctx.get('sessionController')
+      if (typeof controller?.modelCatalog !== 'function') throw new Error('模型目录不可用')
+      const catalog = await controller.modelCatalog()
+      return modelCatalogText(catalog, { provider, current: modelOptions(lead), limit: config.resultChars })
     },
     /**
      * 停止一个本工作目录根会话的当前轮，并留下排队消息。和界面上的停止按钮相同。

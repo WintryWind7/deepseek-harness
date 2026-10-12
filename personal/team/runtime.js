@@ -127,6 +127,97 @@ export function modelSelection(args, required) {
   }
 }
 
+const NO_REASONING = '不支持推理强度；指定它时 reasoning_effort 传 off'
+const TRUNCATED_NOTE = '（已截断。要看得更全，用 provider 指定一个提供方。）'
+
+/**
+ * 把一次模型选择里的推理强度对齐到模型能力。目录里没有推理强度的模型不能带这个
+ * 参数，团队工具约定这类模型传 off，这里换成“不带该字段”；传别的强度说明它没有
+ * 可选强度，直接报错。有推理强度的模型原样返回。
+ * @param {any} info 模型元数据（`resolveModelInfo` 的结果）
+ * @param {{provider: string, model: string, reasoningEffort: string}} selection
+ * @returns {string | undefined} 交给会话控制器的推理强度
+ */
+export function normalizeEffort(info, selection) {
+  if (info?.reasoning !== undefined) return selection.reasoningEffort
+  if (selection.reasoningEffort !== 'off') {
+    throw new Error(`${selection.provider}/${selection.model} 不支持推理强度，reasoning_effort 传 off`)
+  }
+  return undefined
+}
+
+/**
+ * 工具回执里的模型选择写法。没有推理强度时说明这一点，不印出 undefined。
+ * @param {{provider: string, model: string, reasoningEffort?: string}} selection
+ * @returns {string}
+ */
+export function selectionLabel(selection) {
+  return selection.reasoningEffort === undefined
+    ? `${selection.provider}/${selection.model}（该模型没有推理强度）`
+    : `${selection.provider}/${selection.model}，强度 ${selection.reasoningEffort}`
+}
+
+/** 一个模型支持的推理强度；`open_session` 与 `set_session_model` 要填的就是这些 id。 @param {any} reasoning @returns {string} */
+function reasoningText(reasoning) {
+  const efforts = reasoning?.efforts ?? []
+  if (efforts.length === 0) return NO_REASONING
+  const ids = efforts.map(effort => effort.id).join('、')
+  return reasoning.defaultEffort === undefined
+    ? `推理强度：${ids}（没有默认值）`
+    : `推理强度：${ids}（默认 ${reasoning.defaultEffort}）`
+}
+
+/** @param {any} selection @returns {string | null} */
+function selectionText(selection) {
+  if (typeof selection?.provider !== 'string' || selection.provider === '') return null
+  if (typeof selection?.model !== 'string' || selection.model === '') return null
+  const effort = selection.reasoningEffort === undefined ? '' : `（强度 ${selection.reasoningEffort}）`
+  return `${selection.provider}/${selection.model}${effort}`
+}
+
+/**
+ * 把模型目录整理成文本，供 Lead 填 `open_session` 与 `set_session_model` 的模型参数。
+ * 只列提供方、模型和推理强度这类当前进程声明的事实，不判断哪个模型更强或更快；
+ * 读取失败的提供方单独列出，避免把"没读到"当成"没有模型"。
+ * @param {any} catalog @param {{provider?: string, current?: any, limit?: number}} [options]
+ * @returns {{text: string, providers: number, models: number, truncated: boolean}}
+ */
+export function modelCatalogText(catalog, options = {}) {
+  const limit = options.limit ?? 12000
+  const wanted = options.provider
+  const groups = (catalog?.groups ?? []).filter(group => wanted === undefined || group.id === wanted)
+  const failures = (catalog?.failures ?? []).filter(failure => wanted === undefined || failure.id === wanted)
+  const models = groups.reduce((total, group) => total + group.models.length, 0)
+  const lines = []
+  const current = selectionText(options.current)
+  if (current !== null) lines.push(`你当前的模型：${current}`)
+  const fallback = selectionText(catalog?.default)
+  if (fallback !== null) lines.push(`账号默认模型：${fallback}`)
+  lines.push(wanted === undefined
+    ? `当前可用 ${groups.length} 个提供方、${models} 个模型。`
+    : `提供方 ${wanted} 可用 ${models} 个模型。`)
+  for (const failure of failures) lines.push(`读取失败：${failure.id}（${failure.name}）：${failure.message}`)
+  if (wanted !== undefined && groups.length === 0 && failures.length === 0) {
+    lines.push(`没有提供方 ${wanted}。省略 provider 可以列出全部。`)
+  }
+  for (const group of groups) {
+    lines.push('', `${group.id}（${group.name}）`)
+    for (const model of group.models) lines.push(`- ${model.id}（${model.name}）：${reasoningText(model.reasoning)}`)
+  }
+  // 先给截断提示留位置，免得最后一行正好被上限切掉。
+  const room = limit - TRUNCATED_NOTE.length - 1
+  const kept = []
+  let used = 0
+  let truncated = false
+  for (const line of lines) {
+    if (used + line.length + 1 > room) { truncated = true; break }
+    kept.push(line)
+    used += line.length + 1
+  }
+  if (truncated) kept.push(TRUNCATED_NOTE)
+  return { text: kept.join('\n'), providers: groups.length, models, truncated }
+}
+
 /**
  * 这一轮结束后，goal 驱动会不会自己开下一轮。
  * 驱动是先把会话放回空闲，再马上 followup；空闲本身不能当停止。

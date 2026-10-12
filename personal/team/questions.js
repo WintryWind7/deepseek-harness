@@ -1,4 +1,4 @@
-/** 受管理根会话的提问保留用户弹窗，并允许所属 Lead 竞争回答。 */
+/** 受管理根会话的提问以团队通知转给 Lead，保留用户弹窗并允许竞争回答。 */
 import { assertRoot, latestMessage, requiredText, userMessage } from './runtime.js'
 
 /** @param {any} answer @returns {string} */
@@ -82,7 +82,13 @@ export function createQuestions(ctx, manager, historyLimit, resultChars) {
     const operation = manager.ensureAgent(record.leadId, signal).then(lead => {
       if (pending.get(id)?.includes(waiter) && manager.owner(id)?.generation === record.generation
         && waiter.forwardedGeneration !== record.generation) {
-        lead.followup(userMessage(formatQuestions(id, waiter.questions, waiter.prior)))
+        const source = ctx.sessions.get(id)
+        const title = source ? ctx.get('sessionTitle')?.get(source)?.title ?? id : id
+        lead.steer(userMessage(formatQuestions(id, waiter.questions, waiter.prior), undefined, {
+          kind: 'team-message',
+          form: 'notice',
+          summary: `${title} 正在提问`,
+        }))
         waiter.forwardedGeneration = record.generation
         manager.noteInbound?.({ sessionId: id, leadId: record.leadId, kind: 'question' })
       }

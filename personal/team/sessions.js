@@ -1,7 +1,7 @@
 /** Lead 专用工具。工作会话、管理面板和轮次回传由同一个 Host 管理实例驱动。 */
 import { randomUUID } from 'node:crypto'
 import { getManager } from './index.js'
-import { DEFAULT_PRESET, modelOptions, modelSelection, mountPreset, requiredText, userMessage } from './runtime.js'
+import { DEFAULT_PRESET, modelOptions, modelSelection, mountPreset, requiredText, selectionLabel, userMessage } from './runtime.js'
 
 export const name = 'lead-sessions'
 export const inject = ['tools', 'agents']
@@ -33,13 +33,13 @@ export function apply(ctx) {
     value => value.replaced === null
       ? `你已经是本工作区的 Lead，当前名下 ${value.members} 个成员。`
       : `你已经是本工作区的 Lead，接管了原 Lead ${value.replaced} 名下的 ${value.members} 个成员。`),
-    tool('open_session', '新建独立根会话并纳入你的管理，发送第一条任务。返回会话 id；每轮结束结果会自动送回本会话。provider、model、reasoning_effort 一起给出时，这个会话使用该模型；三项都省略则沿用你当前的模型。', {
+    tool('open_session', '新建独立根会话并纳入你的管理，发送第一条任务。返回会话 id；每轮结束结果会自动送回本会话。用户没有指定用哪个模型时不要给模型参数，会话自动沿用你当前的模型；要指定模型，先用 `list_models` 查可用的提供方、模型和推理强度，再把 provider、model、reasoning_effort 三项一起给出。', {
       title: { type: 'string', description: '工作会话标题。' },
       prompt: { type: 'string', description: '自包含的任务、范围与约束；不会复制 Lead 的聊天上下文。' },
       preset: { type: 'string', description: `预设 id，省略时使用开发助手（${DEFAULT_PRESET}）。` },
       provider: { type: 'string', description: '模型提供方 id。与 model、reasoning_effort 同时给出，或三项都省略。' },
       model: { type: 'string', description: '模型 id。' },
-      reasoning_effort: { type: 'string', description: '该模型的推理强度 id。' },
+      reasoning_effort: { type: 'string', description: '该模型的推理强度 id。`list_models` 里标“不支持推理强度”的模型传 off。' },
     }, ['title', 'prompt'], async (args, exec) => {
       const caller = lead(exec)
       const title = requiredText(args.title, 'title')
@@ -56,31 +56,39 @@ export function apply(ctx) {
         setup: mountPreset(presets, preset),
       })
       const agent = handle.agent
+      let installed
       try {
         ctx.get('sessionTitle')?.rename(agent.session, title)
         const workspaces = ctx.get('workspaceRegistry')
         const workspace = workspaces?.list().find(item => item.sessionIds.includes(caller.id))
         if (workspace) await workspace.attachSession(agent.id)
         await manager().manage(caller, agent.id, 'add', exec.signal)
-        if (chosen) await manager().setSessionModel(caller, agent.id, chosen, exec.signal)
+        if (chosen) installed = await manager().setSessionModel(caller, agent.id, chosen, exec.signal)
         agent.followup(userMessage(prompt))
       } catch (error) {
         throw new Error(`已创建根会话 ${agent.id}，但初始化或任务发送失败：${error.message}`)
       }
       return {
         sessionId: agent.id, preset, managed: true,
-        ...(chosen ? { provider: chosen.provider, model: chosen.model, reasoningEffort: chosen.reasoningEffort } : {}),
+        ...(installed === undefined ? {} : {
+          provider: installed.provider, model: installed.model,
+          ...(installed.reasoningEffort === undefined ? {} : { reasoningEffort: installed.reasoningEffort }),
+        }),
       }
-    }, value => `已打开并纳入管理的根会话：${value.sessionId}（预设：${value.preset}${value.model ? `，模型：${value.provider}/${value.model}，强度：${value.reasoningEffort}` : ''}）。任务已送入；本轮工具不等待工作结果。`),
-    tool('set_session_model', '改本工作目录下一个根会话的下一次模型请求。不打断正在跑的轮次，也不改账号默认模型。不能改 Lead 自己。', {
+    }, value => `已打开并纳入管理的根会话：${value.sessionId}（预设：${value.preset}${value.model ? `，模型：${selectionLabel(value)}` : ''}）。任务已送入；本轮工具不等待工作结果。`),
+    tool('set_session_model', '改本工作目录下一个根会话的下一次模型请求。不打断正在跑的轮次，也不改账号默认模型。不能改 Lead 自己。先用 `list_models` 查可用的提供方、模型和推理强度，再把三项一起给出。', {
       session_id: { type: 'string', description: '目标根会话 id。' },
       provider: { type: 'string', description: '模型提供方 id。' },
       model: { type: 'string', description: '模型 id。' },
-      reasoning_effort: { type: 'string', description: '该模型的推理强度 id。' },
+      reasoning_effort: { type: 'string', description: '该模型的推理强度 id。`list_models` 里标“不支持推理强度”的模型传 off。' },
     }, ['session_id', 'provider', 'model', 'reasoning_effort'], async (args, exec) => {
       const caller = lead(exec)
       return manager().setSessionModel(caller, requiredText(args.session_id, 'session_id'), modelSelection(args, true), exec.signal)
-    }, value => `已改 ${value.sessionId} 的下一次请求：${value.provider}/${value.model}，强度 ${value.reasoningEffort}。正在跑的轮次不受影响。`),
+    }, value => `已改 ${value.sessionId} 的下一次请求：${selectionLabel(value)}。正在跑的轮次不受影响。`),
+    tool('list_models', '列出本进程当前可用的模型：提供方、模型 id、名称，以及每个模型支持的推理强度 id 和默认值。要给会话指定或更换模型，先用它查准取值；它只读，不改任何会话。', {
+      provider: { type: 'string', description: '只看这一个提供方 id；省略时列出全部。' },
+    }, [], (args, exec) => manager().listModels(lead(exec), args),
+    value => value.text),
     tool('wait_session', '仅当用户明确要求使用本工具时调用。不要因为任务很长、开了 goal，或要等某个会话做完，就自行调用。不指定会话：在你管理的会话里，谁先把一轮结果或一个提问送进来，就返回谁。已经有待答提问，或眼下没有会发来消息的会话，会立刻返回。goal 还会自己续的中间轮次不算消息。超时不报错。正文仍由原来的回传送入，不在这个结果里重复。', {
       timeout_seconds: { type: 'integer', minimum: 1, maximum: 3600, description: '等待上限，1 至 3600 的整数秒。' },
     }, ['timeout_seconds'], (args, exec) => manager().wait(lead(exec), args.timeout_seconds, exec.signal),
