@@ -99,11 +99,11 @@ export function apply(ctx) {
       provider: { type: 'string', description: '只看这一个提供方 id；省略时列出全部。' },
     }, [], (args, exec) => manager().listModels(lead(exec), args),
     value => value.text),
-    tool('wait_session', '仅当用户明确要求使用本工具时调用。不要因为任务很长、开了 goal，或要等某个会话做完，就自行调用。不指定会话：在你管理的会话里，谁先把一轮结果或一个提问送进来，就返回谁。已经有待答提问，或眼下没有会发来消息的会话，会立刻返回。goal 还会自己续的中间轮次不算消息。超时不报错。正文仍由原来的回传送入，不在这个结果里重复。', {
-      timeout_seconds: { type: 'integer', minimum: 1, maximum: 3600, description: '等待上限，1 至 3600 的整数秒。' },
+    tool('wait_session', '你自己还有会自动续跑的目标，且受管理会话还在跑时调用，把本轮停在等待上。没有这种目标时不要调用。不指定会话：谁先把一轮结果或一个提问送进来，就返回谁。已经有待答提问，或眼下没有会发来消息的会话，会立刻返回。工作会话自己还会自动续的中间轮次不算消息。超时不报错；超时后会话仍在跑就再调，不要结束本轮。正文仍由原来的回传送入，不在这个结果里重复。', {
+      timeout_seconds: { type: 'integer', minimum: 1, maximum: 3600, description: '等待上限，1 至 3600 的整数秒。等自己还会自动续跑的目标时填 3600。' },
     }, ['timeout_seconds'], (args, exec) => manager().wait(lead(exec), args.timeout_seconds, exec.signal),
     value => {
-      if (value.timedOut) return '等待超时，这段时间没有受管理会话把新消息送进来。'
+      if (value.timedOut) return '等待超时，受管理会话还在跑。再调用 wait_session，不要结束本轮。'
       if (value.kind === 'question') {
         return value.waited
           ? `会话 ${value.sessionId} 发来提问。用 reply_question 回答。正文已送入本会话。`
