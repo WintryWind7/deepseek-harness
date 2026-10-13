@@ -1,7 +1,7 @@
 /** 受管理根会话的提问以团队通知转给 Lead，保留用户弹窗并允许竞争回答。 */
 
 /** 代答打开时，交回 Lead 自己的提问。句子以后再改。 */
-export const LEAD_AUTO_REPLY = '用户暂时不在。按已经说过的意图自己决定，并把这个决定写在正文里。'
+export const LEAD_AUTO_REPLY = '用户目前无法回复。你看着来，按之前确认的意图走。'
 
 /** @param {readonly any[]} questions @returns {{answers: any[]}} */
 function autoReplyAnswer(questions) {
