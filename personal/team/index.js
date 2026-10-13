@@ -834,7 +834,8 @@ export function createManager(ctx, config) {
     },
     /**
      * 等到这个 Lead 名下第一个新消息，或超时。消息是真正送进 Lead 的一轮结果或一次提问。
-     * 用户把消息插话进当前轮时也立刻返回，消息留在下一步；只排进下一轮的不算。
+     * 排队栏里最早的一条用户消息会立刻进入当前轮并返回，其余继续排队。等待期间会话仍算正在跑。
+     * 用户插话进当前轮时也立刻返回。
      * 已经有待答提问，或眼下没有会再发来消息的会话时立刻返回。超时不抛错。
      * @param {any} lead @param {number} timeout @param {AbortSignal | undefined} signal
      */
@@ -873,10 +874,21 @@ export function createManager(ctx, config) {
           if (error) reject(error)
           else resolve(value)
         }
+        const admitOldestQueued = () => {
+          const inbox = lead.inbox
+          const message = inbox?.nextTurn?.[0]
+          if (message?.source?.kind !== 'user') return
+          if (typeof inbox.remove !== 'function' || inbox.remove(message.id) !== true) return
+          lead.steer(message)
+          finish({ kind: 'user', timedOut: false, waited: true })
+        }
         const onSteer = ({ agent, message }) => {
           if (agent?.id !== lead.id || message?.source?.kind !== 'user') return
-          if (!agent.inbox?.nextStep?.some(item => item.id === message.id)) return
-          finish({ kind: 'user', timedOut: false, waited: true })
+          if (agent.inbox?.nextStep?.some(item => item.id === message.id)) {
+            finish({ kind: 'user', timedOut: false, waited: true })
+            return
+          }
+          if (agent.inbox?.nextTurn?.[0]?.id === message.id) admitOldestQueued()
         }
         const onInbound = (notice) => {
           if (notice.leadId !== lead.id || records.get(notice.sessionId)?.leadId !== lead.id) return
@@ -897,6 +909,7 @@ export function createManager(ctx, config) {
           else finish({ kind: 'none', timedOut: needsWait(), waited: true })
         }, timeout * 1000)
         stopSteer = ctx.on('agent/inbox/inserted', onSteer)
+        admitOldestQueued()
         inboundWaiters.add(onInbound)
         activityListeners.add(tick)
         if (linked.aborted) onAbort()

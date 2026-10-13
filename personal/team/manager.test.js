@@ -34,7 +34,11 @@ async function setup(options = {}) {
       const list = listeners.get(name) ?? []
       list.push(fn)
       listeners.set(name, list)
-      return () => {}
+      return () => {
+        const current = listeners.get(name) ?? []
+        const index = current.indexOf(fn)
+        if (index >= 0) current.splice(index, 1)
+      }
     },
     effect: () => {},
     get: name => {
@@ -755,11 +759,18 @@ test('wait 不指定会话：没人会发消息就立刻返回，否则等第一
   } finally { h.cleanup() }
 })
 
-test('wait 只在用户插话进入下一步时结束，排队和团队回传不打断', async () => {
+test('wait 收走排队栏最早的一条用户消息，其余留下，团队回传不误收', async () => {
   const h = await setup()
   try {
     const lead = h.add('lead-1', { agentPreset: 'team-dev' })
     const work = h.add('work-1', { agentPreset: 'main-dev' })
+    lead.inbox.remove = id => {
+      const index = lead.inbox.nextTurn.findIndex(item => item.id === id)
+      if (index < 0) return false
+      lead.inbox.nextTurn.splice(index, 1)
+      return true
+    }
+    lead.steer = message => { lead.inbox.nextStep.push(message) }
     await h.manager.becomeLead(lead, {}, undefined)
     await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
     await new Promise(resolve => setImmediate(resolve))
@@ -767,23 +778,33 @@ test('wait 只在用户插话进入下一步时结束，排队和团队回传不
     const emit = message => {
       for (const listener of h.listeners.get('agent/inbox/inserted') ?? []) listener({ agent: lead, message })
     }
+    const first = { id: 'first', source: { kind: 'user' } }
+    const second = { id: 'second', source: { kind: 'user' } }
+    lead.inbox.nextTurn.push(first, second)
+    assert.deepEqual(await h.manager.wait(lead, 30, undefined), { kind: 'user', timedOut: false, waited: true })
+    assert.deepEqual(lead.inbox.nextTurn.map(item => item.id), ['second'])
+    assert.equal(lead.inbox.nextStep.some(item => item.id === 'first'), true)
 
-    const waiting = h.manager.wait(lead, 30, undefined)
-    let settled = false
-    void waiting.then(() => { settled = true })
-    const queued = { id: 'queued', source: { kind: 'user' } }
-    lead.inbox.nextTurn.push(queued)
-    emit(queued)
-    await new Promise(resolve => setImmediate(resolve))
-    assert.equal(settled, false)
+    lead.inbox.nextTurn.length = 0
+    lead.inbox.nextStep.length = 0
+    const arriving = h.manager.wait(lead, 30, undefined)
+    const third = { id: 'third', source: { kind: 'user' } }
+    const fourth = { id: 'fourth', source: { kind: 'user' } }
+    lead.inbox.nextTurn.push(third, fourth)
+    emit(third)
+    assert.deepEqual(await arriving, { kind: 'user', timedOut: false, waited: true })
+    assert.deepEqual(lead.inbox.nextTurn.map(item => item.id), ['fourth'])
+    assert.equal(lead.inbox.nextStep.some(item => item.id === 'third'), true)
 
+    lead.inbox.nextTurn.length = 0
+    lead.inbox.nextStep.length = 0
     const steered = { id: 'steered', source: { kind: 'user' } }
+    const waitingSteer = h.manager.wait(lead, 30, undefined)
     lead.inbox.nextStep.push(steered)
     emit(steered)
-    assert.deepEqual(await waiting, { kind: 'user', timedOut: false, waited: true })
+    assert.deepEqual(await waitingSteer, { kind: 'user', timedOut: false, waited: true })
     assert.equal(lead.inbox.nextStep.some(item => item.id === 'steered'), true)
 
-    work.status = 'running'
     const relay = h.manager.wait(lead, 30, undefined)
     let relaySettled = false
     void relay.then(() => { relaySettled = true })
