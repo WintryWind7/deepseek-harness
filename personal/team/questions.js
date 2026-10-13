@@ -12,8 +12,8 @@ function formatAnswer(answer) {
  */
 export function formatQuestions(id, questions, prior) {
   const lines = [
-    `受管理根会话 ${id} 正在提问。用户弹窗仍在，你和用户谁先回答谁算。`,
-    '用 reply_question 回答，不要用 continue_session。每个问题一条答案；selected 填选项原文，自由文本用 custom。',
+    `受管理根会话 ${id} 正在提问。用 reply_question 回答。拿不准就先用你自己的 ask_user_question 询问用户，充分了解用户意图后再回答工作会话。不要用 continue_session 进行回答问题。`,
+    '每个问题一条答案；selected 填选项原文，自由文本用 custom。',
   ]
   if (prior?.text) {
     lines.push('', '提问前的正文：', prior.text)

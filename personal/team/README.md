@@ -48,7 +48,7 @@ Lead 用 `continue_session` 发下一句话。对方正在跑时，这句话插�
 
 ## 提问
 
-受管理会话调用 `ask_user_question` 时弹窗照常出现。问题连同它提问前已经写下的正文送进 Lead 会话；正文过长时按 `resultChars` 截断。提问通知与轮次结果使用同一团队消息来源，显示为团队通知而不是用户气泡，摘要为「<会话标题> 正在提问」；没有标题时使用会话 id。这一轮还没结束，`read_session` 读不到这段正文。Lead 用 `reply_question` 按问题 id 回答，**先回答者生效**。Lead 先答时用户弹窗会关掉，不用再手动关闭；用户先答时，Lead 的迟到回答会带出用户答案。工作会话正在等这次提问的回答时，不要用 `continue_session` 代替 `reply_question`。
+受管理会话调用 `ask_user_question` 时弹窗照常出现。问题连同它提问前已经写下的正文送进 Lead 会话；正文过长时按 `resultChars` 截断。提问通知与轮次结果使用同一团队消息来源，显示为团队通知而不是用户气泡，摘要为「<会话标题> 正在提问」；没有标题时使用会话 id。这一轮还没结束，`read_session` 读不到这段正文。通知要求 Lead 用 `reply_question` 回答；拿不准时先用自己的 `ask_user_question` 询问用户，了解意图后再回答工作会话，不要用 `continue_session` 回答这次提问。用户先在弹窗作答时，Lead 的迟到回答会带出用户答案；Lead 先答时弹窗会关掉。
 
 Host 启动后已出现、尚未回答的普通根会话问题，在纳入管理时也会转给 Lead。
 

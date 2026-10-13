@@ -895,8 +895,8 @@ test('提问以团队通知插队，保留提问前正文和选项，没有标�
         kind: 'team-message', form: 'notice', summary: `${title ?? 'work-1'} 正在提问`,
       })
       assert.deepEqual(messages[0].content, [{ type: 'text', text: [
-        '受管理根会话 work-1 正在提问。用户弹窗仍在，你和用户谁先回答谁算。',
-        '用 reply_question 回答，不要用 continue_session。每个问题一条答案；selected 填选项原文，自由文本用 custom。',
+        '受管理根会话 work-1 正在提问。用 reply_question 回答。拿不准就先用你自己的 ask_user_question 询问用户，充分了解用户意图后再回答工作会话。不要用 continue_session 进行回答问题。',
+        '每个问题一条答案；selected 填选项原文，自由文本用 custom。',
         '', '提问前的正文：', '方案：保持已有截图。',
         '', '问题 id：q1', '标题：下一步', '继续吗？', '- 继续：保留当前方案',
       ].join('\n') }])
