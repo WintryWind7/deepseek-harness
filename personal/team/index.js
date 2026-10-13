@@ -834,6 +834,7 @@ export function createManager(ctx, config) {
     },
     /**
      * 等到这个 Lead 名下第一个新消息，或超时。消息是真正送进 Lead 的一轮结果或一次提问。
+     * 用户把消息插话进当前轮时也立刻返回，消息留在下一步；只排进下一轮的不算。
      * 已经有待答提问，或眼下没有会再发来消息的会话时立刻返回。超时不抛错。
      * @param {any} lead @param {number} timeout @param {AbortSignal | undefined} signal
      */
@@ -860,15 +861,22 @@ export function createManager(ctx, config) {
       const linked = signalFor(signal)
       return new Promise((resolve, reject) => {
         let settled = false
+        let stopSteer = () => {}
         const finish = (value, error) => {
           if (settled) return
           settled = true
           clearTimeout(timer)
+          stopSteer()
           inboundWaiters.delete(onInbound)
           activityListeners.delete(tick)
           linked.removeEventListener('abort', onAbort)
           if (error) reject(error)
           else resolve(value)
+        }
+        const onSteer = ({ agent, message }) => {
+          if (agent?.id !== lead.id || message?.source?.kind !== 'user') return
+          if (!agent.inbox?.nextStep?.some(item => item.id === message.id)) return
+          finish({ kind: 'user', timedOut: false, waited: true })
         }
         const onInbound = (notice) => {
           if (notice.leadId !== lead.id || records.get(notice.sessionId)?.leadId !== lead.id) return
@@ -888,6 +896,7 @@ export function createManager(ctx, config) {
           if (pending !== undefined) finish({ sessionId: pending, kind: 'question', timedOut: false, waited: true })
           else finish({ kind: 'none', timedOut: needsWait(), waited: true })
         }, timeout * 1000)
+        stopSteer = ctx.on('agent/inbox/inserted', onSteer)
         inboundWaiters.add(onInbound)
         activityListeners.add(tick)
         if (linked.aborted) onAbort()

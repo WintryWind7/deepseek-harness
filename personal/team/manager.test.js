@@ -755,6 +755,48 @@ test('wait 不指定会话：没人会发消息就立刻返回，否则等第一
   } finally { h.cleanup() }
 })
 
+test('wait 只在用户插话进入下一步时结束，排队和团队回传不打断', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    await new Promise(resolve => setImmediate(resolve))
+    work.status = 'running'
+    const emit = message => {
+      for (const listener of h.listeners.get('agent/inbox/inserted') ?? []) listener({ agent: lead, message })
+    }
+
+    const waiting = h.manager.wait(lead, 30, undefined)
+    let settled = false
+    void waiting.then(() => { settled = true })
+    const queued = { id: 'queued', source: { kind: 'user' } }
+    lead.inbox.nextTurn.push(queued)
+    emit(queued)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(settled, false)
+
+    const steered = { id: 'steered', source: { kind: 'user' } }
+    lead.inbox.nextStep.push(steered)
+    emit(steered)
+    assert.deepEqual(await waiting, { kind: 'user', timedOut: false, waited: true })
+    assert.equal(lead.inbox.nextStep.some(item => item.id === 'steered'), true)
+
+    work.status = 'running'
+    const relay = h.manager.wait(lead, 30, undefined)
+    let relaySettled = false
+    void relay.then(() => { relaySettled = true })
+    const notice = { id: 'notice', source: { kind: 'team-message' } }
+    lead.inbox.nextStep.push(notice)
+    emit(notice)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(relaySettled, false)
+    h.manager.noteInbound({ sessionId: 'work-1', leadId: 'lead-1', kind: 'result' })
+    assert.deepEqual(await relay, { sessionId: 'work-1', kind: 'result', timedOut: false, waited: true })
+  } finally { h.cleanup() }
+})
+
 test('轮次结果插队进入 Lead 下一步，保留团队来源和正文', async () => {
   const stored = new Map()
   const delivered = Promise.withResolvers()
