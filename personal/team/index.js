@@ -74,6 +74,7 @@ export function createManager(ctx, config) {
   const deliveries = new Map()
   const resumes = new Map()
   const listeners = new Set()
+  const autoReply = new Set()
   const shutdown = new AbortController()
   let questions
   let closed = false
@@ -595,15 +596,26 @@ export function createManager(ctx, config) {
      * —— 打开面板的会话可能是冷的，而 userQuestions.ask 要求精确的 live 根 agent。
      * @param {string} viewedId @param {string} action @param {string | undefined} targetId @param {AbortSignal | undefined} signal
      */
+    autoReplyOn: id => autoReply.has(id),
     async panelAct(viewedId, action, targetId, signal) {
       const viewed = await observe(ctx, viewedId, signalFor(signal), snapshot => snapshot)
       const cwd = requiredText(viewed.header.cwd, '面板会话工作目录')
       const ids = (await usableSessions(signal)).ids
       const seated = leadIdOf(cwd, ids)
+      if (action === 'auto-reply') {
+        if (seated === undefined || viewedId !== seated) throw new Error('只有 Lead 会话可以切换代答')
+        if (targetId !== 'on' && targetId !== 'off') throw new Error('代答只能切换为 on 或 off')
+        const enabled = targetId === 'on'
+        if (enabled) autoReply.add(viewedId)
+        else autoReply.delete(viewedId)
+        if (enabled) questions?.answerOwn(viewedId)
+        return { action, enabled }
+      }
       if (action === 'lose-lead') {
         if (seated === undefined) throw new Error('本工作区还没有 Lead')
         if (targetId !== seated) throw new Error(`会话 ${targetId} 不是本工作区的 Lead（现任 ${seated}）`)
         const members = membersOf(seated)
+        autoReply.delete(seated)
         updateLead(cwd, undefined)
         leads.delete(cwd)
         changed()
@@ -618,6 +630,7 @@ export function createManager(ctx, config) {
         }
         if (records.has(targetId)) throw new Error(`会话 ${targetId} 是受管理工作会话，不能再充当 Lead`)
         const { replaced } = seatLead(cwd, targetId, ids, seated)
+        if (replaced !== undefined && replaced !== null) autoReply.delete(replaced)
         return { action, leadId: targetId, replaced, members: membersOf(targetId) }
       }
       if (action === 'add') {

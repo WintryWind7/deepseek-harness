@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Config, createManager } from './index.js'
+import { LEAD_AUTO_REPLY } from './questions.js'
 import { readRecords } from './runtime.js'
 
 /**
@@ -926,6 +927,33 @@ test('提问以团队通知插队，保留提问前正文和选项，没有标�
       assert.deepEqual(await answered, { answers })
     } finally { h.cleanup() }
   }
+})
+
+test('代答只交回 Lead 自己的提问，工作会话仍走弹窗', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.panelAct('work-1', 'add', 'work-1', undefined)
+    await h.manager.panelAct('lead-1', 'auto-reply', 'on', undefined)
+    const handler = h.listeners.get('user-questions/request')?.[0]
+    const leadAsk = handler({
+      agent: lead,
+      questions: [{ id: 'q1', question: '要继续吗？' }],
+      signal: new AbortController().signal,
+    }, () => { throw new Error('不应弹出 Lead 的提问') })
+    assert.deepEqual(await leadAsk, { answers: [{ id: 'q1', selected: [], custom: LEAD_AUTO_REPLY }] })
+    let popped = false
+    const userAnswer = { answers: [{ id: 'q2', selected: ['继续'] }] }
+    const workAsk = handler({
+      agent: work,
+      questions: [{ id: 'q2', question: '继续吗？', options: [{ label: '继续' }] }],
+      signal: new AbortController().signal,
+    }, () => { popped = true; return userAnswer })
+    assert.deepEqual(await workAsk, userAnswer)
+    assert.equal(popped, true)
+  } finally { h.cleanup() }
 })
 
 test('reply_question 先答时只取消弹窗信号，不取消工具自己的信号', async () => {

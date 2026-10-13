@@ -1,4 +1,12 @@
 /** 受管理根会话的提问以团队通知转给 Lead，保留用户弹窗并允许竞争回答。 */
+
+/** 代答打开时，交回 Lead 自己的提问。句子以后再改。 */
+export const LEAD_AUTO_REPLY = '用户暂时不在。按已经说过的意图自己决定，并把这个决定写在正文里。'
+
+/** @param {readonly any[]} questions @returns {{answers: any[]}} */
+function autoReplyAnswer(questions) {
+  return { answers: questions.map(row => ({ id: row.id, selected: [], custom: LEAD_AUTO_REPLY })) }
+}
 import { assertRoot, latestMessage, requiredText, userMessage } from './runtime.js'
 
 /** @param {any} answer @returns {string} */
@@ -105,6 +113,8 @@ export function createQuestions(ctx, manager, historyLimit, resultChars) {
     try { assertRoot(agent.session.header, ctx) } catch (error) { return next() }
     const record = manager.owner(agent.id)
     const { questions } = request
+    // 代答只处理 Lead 自己的提问。受管理工作会话仍弹窗，并转给 Lead。
+    if (!record && manager.autoReplyOn(agent.id)) return autoReplyAnswer(questions)
     const outer = request.signal
     // 弹窗听的是请求上的 signal。换成一条链接信号：工具自己的取消仍会关弹窗，
     // Lead 先答时只中止这条链接，不中止工作会话的工具信号。
@@ -134,6 +144,9 @@ export function createQuestions(ctx, manager, historyLimit, resultChars) {
 
   return {
     count: id => (pending.get(id) ?? []).length,
+    answerOwn(id) {
+      for (const waiter of [...(pending.get(id) ?? [])]) waiter.settle(autoReplyAnswer(waiter.questions))
+    },
     view: id => (pending.get(id) ?? []).flatMap(waiter => waiter.questions),
     adopt(id, record) { for (const waiter of pending.get(id) ?? []) notify(id, waiter, record) },
     release(id) { for (const waiter of [...(pending.get(id) ?? [])]) waiter.release() },

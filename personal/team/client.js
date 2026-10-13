@@ -64,6 +64,10 @@ window.__ModuleLoader__.load({
       maxTokens: '达到输出上限',
       forked: '已分叉',
       otherReason: '已结束',
+      awayOff: '代答关',
+      awayOffDetail: 'Lead 提问时仍弹窗等你。',
+      awayOn: '代答开',
+      awayOnDetail: 'Lead 自己的提问直接交回，不再等你。工作会话的弹窗仍转给 Lead。',
     };
     const en = {
       title: 'Team',
@@ -113,6 +117,10 @@ window.__ModuleLoader__.load({
       maxTokens: 'Output limit reached',
       forked: 'Forked',
       otherReason: 'Ended',
+      awayOff: 'Auto-reply off',
+      awayOffDetail: 'Questions from the Lead still wait for you.',
+      awayOn: 'Auto-reply on',
+      awayOnDetail: 'The Lead’s own questions are answered immediately. Work-session questions still come to the Lead.',
     };
 
     const CSS = `
@@ -155,6 +163,15 @@ window.__ModuleLoader__.load({
       .wt-trigger { display:inline-flex; flex:none; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }
       .wt-trigger:hover { background:var(--dsw-alias-bg-layer-2); color:var(--dsw-alias-label-primary); }
       .wt-trigger:focus-visible { outline:2px solid var(--dsw-alias-brand-primary); outline-offset:2px; }
+      .wt-away { position:relative; display:inline-flex; }
+      .wt-away .wt-trigger { position:relative; }
+      .wt-away .wt-trigger[data-away='on'] { background:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-layer-1); }
+      .wt-away .wt-trigger[data-away='on']:hover { background:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-layer-1); }
+      .wt-awaydot { position:absolute; right:3px; bottom:3px; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-state-idle-primary); box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-1); }
+      .wt-trigger[data-away='on'] .wt-awaydot { background:var(--dsw-alias-state-success-primary); box-shadow:0 0 0 1px var(--dsw-alias-brand-primary); }
+      .wt-awaytip { position:absolute; left:50%; bottom:calc(100% + 8px); z-index:30; width:max-content; max-width:240px; padding:8px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); font-size:12px; line-height:18px; text-align:left; white-space:normal; pointer-events:none; opacity:0; transform:translateX(-50%); }
+      .wt-away:hover .wt-awaytip,.wt-away:focus-within .wt-awaytip { opacity:1; }
+      .wt-awaytip strong { display:block; font-weight:500; }
       .wt-overlay { position:fixed; inset:0; z-index:60; display:flex; align-items:flex-start; justify-content:center; padding:10vh 16px 16px; background:var(--dsw-alias-overlay, rgba(0,0,0,.4)); }
       .wt-dialog { width:min(560px,100%); max-height:80vh; overflow:auto; padding:16px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-md); background:var(--dsw-alias-bg-layer-1); box-shadow:0 12px 40px rgba(0,0,0,.24); }
       @keyframes wt-pulse { to { opacity:.5; } }
@@ -422,16 +439,55 @@ window.__ModuleLoader__.load({
      * 和它们一样无条件渲染按钮，没有会话时只在弹窗里显示空态。会话 id 缺席时
      * 提前 return null 会让入口在页面上彻底消失。
      */
+    function awayKey(sessionId) { return 'wintry-team-auto-reply:' + sessionId; }
+    function readAway(sessionId) {
+      try { return window.localStorage.getItem(awayKey(sessionId)) === 'on'; }
+      catch { return false; }
+    }
+    function writeAway(sessionId, on) {
+      try { window.localStorage.setItem(awayKey(sessionId), on ? 'on' : 'off'); }
+      catch { /* 浏览器拒绝存储时，这次切换仍然先反映在按钮上。 */ }
+    }
+    async function postAway(sessionId, on) {
+      const response = await fetch(ROUTE, {
+        method:'POST', credentials:'same-origin', cache:'no-store',
+        headers:{ accept:'application/json', 'content-type':'application/json' },
+        body: JSON.stringify({ sessionId, action:'auto-reply', target: on ? 'on' : 'off' }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.ok !== true) throw new Error(typeof body?.error === 'string' ? body.error : ('HTTP ' + response.status));
+    }
+    function AwayIcon() {
+      return h('svg', { width:16, height:16, viewBox:'0 0 16 16', fill:'none', 'aria-hidden':true },
+        h('path', { d:'M3.5 5.5h7.2a1.5 1.5 0 0 1 1.5 1.5v3.2a1.5 1.5 0 0 1-1.5 1.5H7.2L4.6 13.4V11.7H3.5A1.5 1.5 0 0 1 2 10.2V7a1.5 1.5 0 0 1 1.5-1.5Z', stroke:'currentColor', strokeWidth:1.2, strokeLinejoin:'round' }));
+    }
     function TeamTrigger({ sessionId, sourceOf, openSession, t }) {
       // sourceOf 返回的是持有者：订阅面在 holder.source，持有/刷新在 holder 本身。
       const holder = sessionId === undefined ? null : sourceOf(sessionId);
       const view = holder === null ? null : holder.source;
       const [open, setOpen] = useState(false);
+      const [away, setAway] = useState(() => sessionId === undefined ? false : readAway(sessionId));
       const refresh = useCallback(() => { holder?.refresh(); }, [holder]);
       const query = React.useSyncExternalStore(
         view ? view.subscribe : noopSubscribe,
         view ? view.getSnapshot : emptyTeamSnapshot);
-      useEffect(() => open && holder ? holder.retain() : undefined, [open, holder]);
+      const isLead = sessionId !== undefined && query.data?.lead?.sessionId === sessionId;
+      useEffect(() => holder ? holder.retain() : undefined, [holder]);
+      useEffect(() => {
+        if (!isLead) return;
+        const stored = readAway(sessionId);
+        setAway(stored);
+        void postAway(sessionId, stored).catch(() => {});
+      }, [isLead, sessionId]);
+      const toggleAway = () => {
+        const next = !away;
+        setAway(next);
+        writeAway(sessionId, next);
+        void postAway(sessionId, next).catch(() => {
+          setAway(!next);
+          writeAway(sessionId, !next);
+        });
+      };
       return h(React.Fragment, null,
         h('button', {
           type: 'button',
@@ -442,6 +498,20 @@ window.__ModuleLoader__.load({
           'data-dsh-plugin': 'wintry-team',
           'data-dsh-part': 'trigger',
         }, h(TeamIcon, { size: 16 })),
+        isLead && h('span', { className:'wt-away' },
+          h('button', {
+            type:'button',
+            className:'wt-trigger',
+            'data-away': away ? 'on' : 'off',
+            'aria-pressed': away,
+            'aria-label': t(away ? 'awayOn' : 'awayOff'),
+            onClick: toggleAway,
+            'data-dsh-plugin': 'wintry-team',
+            'data-dsh-part': 'auto-reply',
+          }, h(AwayIcon), h('span', { className:'wt-awaydot', 'aria-hidden':true })),
+          h('span', { className:'wt-awaytip', role:'tooltip' },
+            h('strong', null, t(away ? 'awayOn' : 'awayOff')),
+            t(away ? 'awayOnDetail' : 'awayOffDetail'))),
         open && h('div', { className:'wt-overlay', role:'dialog', 'aria-modal':true, 'aria-label':t('title'), 'data-dsh-part':'dialog' },
           h('div', { className:'wt-card wt-dialog' },
             h('div', { className:'wt-head' },
