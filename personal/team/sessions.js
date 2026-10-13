@@ -76,7 +76,7 @@ export function apply(ctx) {
         }),
       }
     }, value => `已打开并纳入管理的根会话：${value.sessionId}（预设：${value.preset}${value.model ? `，模型：${selectionLabel(value)}` : ''}）。任务已送入；本轮工具不等待工作结果。`),
-    tool('set_session_model', '改本工作目录下一个根会话的下一次模型请求。不打断正在跑的轮次，也不改账号默认模型。不能改 Lead 自己。先用 `list_models` 查可用的提供方、模型和推理强度，再把三项一起给出。', {
+    tool('set_session_model', '把本工作目录下一个根会话换成指定模型，不改账号默认模型。正在跑时先停当前轮，换完后继续；原来自动续跑的 goal 会恢复。正在等提问时不取消提问。空闲且没有自动续跑时只改下次请求，不启动会话。不能改 Lead 自己。先用 `list_models` 查可用的提供方、模型和推理强度，再把三项一起给出。', {
       session_id: { type: 'string', description: '目标根会话 id。' },
       provider: { type: 'string', description: '模型提供方 id。' },
       model: { type: 'string', description: '模型 id。' },
@@ -84,7 +84,17 @@ export function apply(ctx) {
     }, ['session_id', 'provider', 'model', 'reasoning_effort'], async (args, exec) => {
       const caller = lead(exec)
       return manager().setSessionModel(caller, requiredText(args.session_id, 'session_id'), modelSelection(args, true), exec.signal)
-    }, value => `已改 ${value.sessionId} 的下一次请求：${selectionLabel(value)}。正在跑的轮次不受影响。`),
+    }, value => {
+      const label = selectionLabel(value)
+      if (value.waiting) return `已改 ${value.sessionId} 的下一次请求：${label}。正在等的提问仍保留。`
+      if (value.resumed) {
+        return value.stopped
+          ? `已停止 ${value.sessionId} 的当前轮，切换为 ${label}，并恢复自动续跑。`
+          : `已将 ${value.sessionId} 切换为 ${label}，并恢复自动续跑。`
+      }
+      if (value.continued) return `已停止 ${value.sessionId} 的当前轮，切换为 ${label}，并从当前进度继续。`
+      return `已改 ${value.sessionId} 的下一次请求：${label}。会话当时没有在跑，也没有自动续跑，所以没有启动它。`
+    }),
     tool('list_models', '列出本进程当前可用的模型：提供方、模型 id、名称，以及每个模型支持的推理强度 id 和默认值。要给会话指定或更换模型，先用它查准取值；它只读，不改任何会话。', {
       provider: { type: 'string', description: '只看这一个提供方 id；省略时列出全部。' },
     }, [], (args, exec) => manager().listModels(lead(exec), args),
@@ -113,11 +123,11 @@ export function apply(ctx) {
       agent.steer(userMessage(message))
       return { sessionId: id, managed: manager().owner(id)?.leadId === exec.agent.id }
     }, value => `消息已插入根会话：${value.sessionId}。对方正在跑时，当前这一步结束后就能看到，不等这轮结束。${value.managed ? '每轮结束结果会回传给你。' : '该会话不在你的管理范围，结果不会自动回传给你。'}`),
-    tool('stop_session', '停止一个本工作目录根会话的当前轮。排队消息留下。正在跑的 goal 会暂停。不删除会话，也不移出管理。不能停 Lead 自己。对方没在跑时直接说明，不会把它拉起来。', {
+    tool('stop_session', '停止一个本工作目录根会话的当前轮，并等它停下。排队消息留下。不换模型，不继续，正在跑的 goal 会暂停。不删除会话，也不移出管理。不能停 Lead 自己。对方没在跑时直接说明，不会把它拉起来。', {
       session_id: { type: 'string', description: '要停止的根会话 id。' },
-    }, ['session_id'], (args, exec) => manager().stopSession(lead(exec), requiredText(args.session_id, 'session_id')),
+    }, ['session_id'], (args, exec) => manager().stopSession(lead(exec), requiredText(args.session_id, 'session_id'), exec.signal),
     value => value.stopped
-      ? `已停止会话 ${value.sessionId} 的当前轮。排队消息还在。`
+      ? `已停止会话 ${value.sessionId} 的当前轮。排队消息还在，不会自动继续。`
       : `会话 ${value.sessionId} 当前没有在跑。`),
     tool('archive_session', '归档一个本工作目录的根会话。它会从团队列表里消失，会话文件还在，可在界面上取消归档。还在跑时拒绝且不归档，需先用 stop_session。不能归档 Lead 自己。不移出管理记录。', {
       session_id: { type: 'string', description: '要归档的根会话 id。' },

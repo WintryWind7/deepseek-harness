@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   adoptMembers, assertRoot, goalWillContinue, hasReceipt, isRoot, isVisibleRoot, latestMessage, liveLeadId, mapLimit,
   modelCatalogText, modelOptions, mountPreset, normalizeEffort, observe, presetIdOf, readRecords, readStored,
-  requiredText, restoredModel, titleText, turnResult, updateLead, updateRecord, userMessage, writeTeam,
+  requiredText, restoredModel, selectionLabel, titleText, turnResult, updateLead, updateRecord, userMessage, writeTeam,
 } from './runtime.js'
 import { createQuestions } from './questions.js'
 
@@ -15,16 +15,22 @@ const PANEL_PATH = '/api/team.sessions'
 const NOTIFY_WINDOW_MS = 300
 /** 面板与列表都要为每个会话读一次日志取标题，不限并发时目录里会话一多会同时打开几百个读取。 */
 const SESSION_READ_CONCURRENCY = 4
+/** 没有 goal、也没有排队消息时，用它唤醒已停下的会话；不重复原来的任务。 */
+const MODEL_SWITCH_CONTINUE = '模型已切换，从当前进度继续。'
 
 /** @param {any} raw @returns {{resultChars: number, questionHistoryLimit: number}} */
 function resolveConfig(raw = {}) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('团队管理配置必须是对象')
-  for (const key of Object.keys(raw)) if (!['resultChars', 'questionHistoryLimit'].includes(key)) throw new Error(`未知团队管理配置：${key}`)
+  for (const key of Object.keys(raw)) {
+    if (!['resultChars', 'questionHistoryLimit', 'stopTimeoutSeconds'].includes(key)) throw new Error(`未知团队管理配置：${key}`)
+  }
   const resultChars = raw.resultChars ?? 12000
   const questionHistoryLimit = raw.questionHistoryLimit ?? 64
+  const stopTimeoutSeconds = raw.stopTimeoutSeconds ?? 60
   if (!Number.isSafeInteger(resultChars) || resultChars < 1000 || resultChars > 100000) throw new Error('resultChars 必须是 1000 至 100000 的整数')
   if (!Number.isSafeInteger(questionHistoryLimit) || questionHistoryLimit < 1 || questionHistoryLimit > 1000) throw new Error('questionHistoryLimit 必须是 1 至 1000 的整数')
-  return { resultChars, questionHistoryLimit }
+  if (!Number.isSafeInteger(stopTimeoutSeconds) || stopTimeoutSeconds < 1 || stopTimeoutSeconds > 3600) throw new Error('stopTimeoutSeconds 必须是 1 至 3600 的整数')
+  return { resultChars, questionHistoryLimit, stopTimeoutSeconds }
 }
 
 /** Cordis 接受 Standard Schema；个人包不依赖 Host 的 zod 模块路径。 */
@@ -375,6 +381,94 @@ export function createManager(ctx, config) {
     if (!row || !Number.isSafeInteger(endSeq) || row.afterSeq >= endSeq) return
     save(id, { ...row, afterSeq: endSeq })
   }
+  const stopTimeoutSeconds = config.stopTimeoutSeconds ?? 60
+  const operations = new Map()
+  /** 同一会话的停止与换模按调用顺序进行，后一次等前一次结束。 */
+  const exclusive = (id, operation) => {
+    const previous = operations.get(id) ?? Promise.resolve()
+    const run = track(previous.then(operation, operation))
+    operations.set(id, run.then(() => undefined, () => undefined))
+    return run
+  }
+  const goalsApi = () => ctx.get('goals')
+  const goalView = agent => {
+    const goals = goalsApi()
+    if (typeof goals?.get !== 'function') return undefined
+    try { return goals.get(agent) } catch { return undefined }
+  }
+  /** 只有此刻会自动开下一轮的 goal 才在换模后恢复。 */
+  const automaticGoal = goal => goal?.phase === 'active' && goal.activation === 'armed' ? goal : undefined
+  const waitIdle = async (agent, signal) => {
+    if (typeof agent.whenIdle !== 'function') throw new Error(`会话 ${agent.id} 的停止状态不可确认`)
+    let timer
+    let onAbort
+    try {
+      await Promise.race([
+        agent.whenIdle(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`会话 ${agent.id} 在 ${stopTimeoutSeconds} 秒内没有停下`)),
+            stopTimeoutSeconds * 1000,
+          )
+        }),
+        new Promise((_, reject) => {
+          onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error('操作已取消'))
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    if (agent.status === 'running') throw new Error(`会话 ${agent.id} 尚未停下`)
+  }
+  /**
+   * 换模前确认目录里真有这个模型，避免参数错误时先把会话停掉。
+   * @param {{provider: string, model: string, reasoningEffort: string}} selection
+   * @param {AbortSignal | undefined} signal
+   * @returns {Promise<string | undefined>}
+   */
+  const prepareSelection = async (selection, signal) => {
+    const llm = ctx.get('llm')
+    if (typeof llm?.resolveModelInfo !== 'function' || typeof llm?.listModels !== 'function') throw new Error('模型信息不可用')
+    const models = await llm.listModels(selection.provider)
+    if (!Array.isArray(models) || !models.some(model => model?.id === selection.model)) {
+      throw new Error(`${selection.provider}/${selection.model} 当前不可用`)
+    }
+    return normalizeEffort(await llm.resolveModelInfo(selection.provider, selection.model, signal), selection)
+  }
+  /** @param {string} id @param {{provider: string, model: string}} selection @param {string | undefined} effort */
+  const installSelection = async (id, selection, effort) => {
+    const controller = ctx.get('sessionController')
+    if (!controller?.selectSessionModel) throw new Error('会话模型选择不可用')
+    const installed = await controller.selectSessionModel({
+      sessionId: id, provider: selection.provider, model: selection.model,
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
+    })
+    return { sessionId: id, ...installed.selected }
+  }
+  /** 恢复换模前正在自动续跑的同一个 goal。已完成或阻塞则不恢复。 @returns {boolean} */
+  const restoreAutomaticGoal = (agent, original) => {
+    if (!original) return false
+    const goals = goalsApi()
+    const current = goalView(agent)
+    if (typeof goals?.resume !== 'function' || !current || current.id !== original.id) return false
+    if (current.phase === 'complete' || current.phase === 'blocked') return false
+    if (current.phase === 'active' && current.activation === 'armed') return true
+    goals.resume(agent, { id: current.id, revision: current.revision })
+    return true
+  }
+  /** 排队消息按原样继续；没有可继续的消息时返回 false。 */
+  const replayPending = agent => {
+    const inbox = agent.inbox
+    const message = inbox?.nextTurn?.[0] ?? inbox?.nextStep?.[0]
+    if (!message || typeof inbox.remove !== 'function' || typeof agent.send !== 'function') return false
+    const target = inbox.nextTurn?.[0] ? 'next-turn' : 'next-step'
+    if (inbox.remove(message.id) !== true) return false
+    agent.send(message, target, true)
+    return true
+  }
   const queue = id => {
     if (!records.has(id) || closed) return
     const previous = deliveries.get(id) ?? Promise.resolve()
@@ -593,10 +687,13 @@ export function createManager(ctx, config) {
     },
     reply(lead, args) { assertLead(lead); return questions.reply(lead, args) },
     /**
-     * 改一个本工作目录根会话的下一次模型请求。不改账号默认，也不打断正在跑的轮次。
+     * 换成指定模型。正在跑时先停当前轮，换完后继续；原来自动续跑的 goal 会恢复。
+     * 正在等提问时不取消提问。空闲且没有自动续跑时只改下次请求。
      * 模型没有推理强度时只能不带这个参数，团队工具约定传 `off`，这里把它换掉。
+     * 不改账号默认模型。
      * @param {any} lead @param {string} id @param {{provider: string, model: string, reasoningEffort: string}} selection
      * @param {AbortSignal | undefined} signal
+     * @returns {Promise<{sessionId: string, provider: string, model: string, reasoningEffort?: string, stopped: boolean, continued: boolean, resumed: boolean, waiting: boolean}>}
      */
     async setSessionModel(lead, id, selection, signal) {
       assertLead(lead)
@@ -607,19 +704,58 @@ export function createManager(ctx, config) {
       const header = live?.session.header ?? await observe(ctx, id, signalFor(signal), snapshot => snapshot.header)
       assertRoot(header, ctx)
       if (header.cwd !== cwd) throw new Error(`会话 ${id} 不在本工作区 ${cwd}`)
-      const agent = live ?? await ensureAgent(id, signal)
-      const controller = ctx.get('sessionController')
-      if (!controller?.selectSessionModel) throw new Error('会话模型选择不可用')
-      const llm = ctx.get('llm')
-      if (typeof llm?.resolveModelInfo !== 'function') throw new Error('模型信息不可用')
-      const effort = normalizeEffort(await llm.resolveModelInfo(selection.provider, selection.model, signalFor(signal)), selection)
-      const installed = await controller.selectSessionModel({
-        sessionId: id,
-        provider: selection.provider,
-        model: selection.model,
-        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+      if (!ctx.get('sessionController')?.selectSessionModel) throw new Error('会话模型选择不可用')
+      const effort = await prepareSelection(selection, signalFor(signal))
+      return exclusive(id, async () => {
+        if (closed) throw new Error('团队管理插件已卸载')
+        const agent = ctx.agents.get(id) ?? await ensureAgent(id, signal)
+        if ((questions?.count(id) ?? 0) > 0) {
+          const installed = await installSelection(id, selection, effort)
+          return { ...installed, stopped: false, continued: false, resumed: false, waiting: true }
+        }
+        const resumeGoal = automaticGoal(goalView(agent))
+        if (resumeGoal && (typeof goalsApi()?.disarm !== 'function' || typeof goalsApi()?.resume !== 'function')) {
+          throw new Error('goal 自动续跑不可用，没有切换模型')
+        }
+        if (resumeGoal) goalsApi().disarm(agent)
+        const wasRunning = agent.status === 'running'
+        if (wasRunning) {
+          if (typeof agent.cancel !== 'function') throw new Error('会话停止不可用')
+          agent.cancel({ kind: 'user' }, { keepInbox: true })
+          try {
+            await waitIdle(agent, signalFor(signal))
+          } catch (error) {
+            const resumed = resumeGoal ? '，自动续跑也没有恢复' : ''
+            throw new Error(`会话 ${id} 没有停下，模型未切换${resumed}：${error.message}`)
+          }
+        }
+        let installed
+        try {
+          installed = await installSelection(id, selection, effort)
+        } catch (error) {
+          try {
+            if (resumeGoal && !restoreAutomaticGoal(agent, resumeGoal)) throw new Error('原来的 goal 已不能自动续跑')
+          } catch (restoreError) {
+            throw new Error(`模型没有切换，自动续跑也没有恢复：${restoreError.message}；切换失败：${error.message}`)
+          }
+          throw error
+        }
+        if (resumeGoal) {
+          try {
+            if (!restoreAutomaticGoal(agent, resumeGoal)) throw new Error('原来的 goal 已不能自动续跑')
+          } catch (error) {
+            throw new Error(`模型已切换为 ${selectionLabel(installed)}，但自动续跑没有恢复：${error.message}`)
+          }
+          return { ...installed, stopped: wasRunning, continued: true, resumed: true, waiting: false }
+        }
+        if (!wasRunning) return { ...installed, stopped: false, continued: false, resumed: false, waiting: false }
+        if (!replayPending(agent)) {
+          agent.followup(userMessage(MODEL_SWITCH_CONTINUE, undefined, {
+            kind: 'team-message', form: 'notice', summary: '模型已切换',
+          }))
+        }
+        return { ...installed, stopped: true, continued: true, resumed: false, waiting: false }
       })
-      return { sessionId: id, ...installed.selected }
     },
     /**
      * 列出本进程当前可用的模型，供 Lead 填 `open_session` 与 `set_session_model` 的模型参数。
@@ -636,12 +772,12 @@ export function createManager(ctx, config) {
       return modelCatalogText(catalog, { provider, current: modelOptions(lead), limit: config.resultChars })
     },
     /**
-     * 停止一个本工作目录根会话的当前轮，并留下排队消息。和界面上的停止按钮相同。
-     * 没在本进程运行的会话不会被拉起来。
-     * @param {any} lead @param {string} id
-     * @returns {{sessionId: string, stopped: boolean}}
+     * 停止一个本工作目录根会话的当前轮，等它停下后才返回。留下排队消息。
+     * 不换模型，不继续，也不恢复自动续跑。没在本进程运行的会话不会被拉起来。
+     * @param {any} lead @param {string} id @param {AbortSignal | undefined} signal
+     * @returns {Promise<{sessionId: string, stopped: boolean}>}
      */
-    stopSession(lead, id) {
+    async stopSession(lead, id, signal) {
       assertLead(lead)
       if (id === lead.id) throw new Error('不能停止 Lead 自己')
       const cwd = requiredText(lead.session.header.cwd, 'Lead 工作目录')
@@ -650,8 +786,14 @@ export function createManager(ctx, config) {
       assertRoot(live.session.header, ctx)
       if (live.session.header.cwd !== cwd) throw new Error(`会话 ${id} 不在本工作区 ${cwd}`)
       if (live.status !== 'running') return { sessionId: id, stopped: false }
-      live.cancel({ kind: 'user' }, { keepInbox: true })
-      return { sessionId: id, stopped: true }
+      return exclusive(id, async () => {
+        const current = ctx.agents.get(id)
+        if (!current || current.status !== 'running') return { sessionId: id, stopped: false }
+        if (typeof current.cancel !== 'function') throw new Error('会话停止不可用')
+        current.cancel({ kind: 'user' }, { keepInbox: true })
+        await waitIdle(current, signalFor(signal))
+        return { sessionId: id, stopped: true }
+      })
     },
     /**
      * 归档一个本工作目录的根会话。还在跑就拒绝，不写入归档。不能归档 Lead 自己。

@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createManager } from './index.js'
+import { Config, createManager } from './index.js'
 import { readRecords } from './runtime.js'
 
 /**
@@ -68,14 +68,17 @@ async function setup(options = {}) {
       },
     },
   }
-  const manager = createManager(ctx, { resultChars: 12_000, questionHistoryLimit: 64 })
+  const manager = createManager(ctx, { resultChars: 12_000, questionHistoryLimit: 64, ...options.config })
   await manager.load()
   manager.start()
   /** 造一个会话 + 它的 live agent，返回 agent。 @param {string} id @param {object} [extra] */
   const add = (id, extra = {}) => {
     const header = { id, cwd, origin: 'root', ...extra }
     const agent = {
-      id, status: 'idle', followup() {}, steer() {}, inbox: { nextTurn: [], nextStep: [] },
+      id, status: 'idle', followup() {}, steer() {}, send() {},
+      inbox: { nextTurn: [], nextStep: [], remove() { return false } },
+      cancel() { agent.status = 'idle' },
+      async whenIdle() {},
       session: { id, header, seq: 100, requestHeader: () => ({ config: {} }) },
     }
     rows.set(id, { header, live: agent })
@@ -260,7 +263,10 @@ test('面板成为 Lead 的准入：非 team-dev、受管理工作会话、Lead 
 test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未接入的控制器', async () => {
   const calls = []
   const h = await setup({
-    llm: { resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } }) },
+    llm: {
+      resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } }),
+      listModels: async () => [{ id: 'deepseek-reasoner' }],
+    },
     sessionController: {
       selectSessionModel: async request => {
         calls.push(request)
@@ -296,7 +302,10 @@ test('setSessionModel 只改目标会话，拒绝 Lead 自己、跨目录和未�
 test('setSessionModel 对没有推理强度的模型把 off 换成不带该参数，别的强度直接报错', async () => {
   const calls = []
   const h = await setup({
-    llm: { resolveModelInfo: async () => ({ provider: 'p', id: 'm', name: 'M' }) },
+    llm: {
+      resolveModelInfo: async () => ({ provider: 'p', id: 'm', name: 'M' }),
+      listModels: async () => [{ id: 'm' }],
+    },
     sessionController: {
       selectSessionModel: async request => {
         calls.push(request)
@@ -365,18 +374,300 @@ test('stopSession 只停当前轮并留下排队，拒绝 Lead 自己和跨目�
     const work = h.add('work-1', { agentPreset: 'main-dev' })
     const other = h.add('work-other', { agentPreset: 'main-dev', cwd: join(h.cwd, '..', 'somewhere-else') })
     const cancels = []
-    work.cancel = (cause, options) => { cancels.push({ cause, options }) }
     other.cancel = () => { throw new Error('不应停止别的工作区') }
     await h.manager.becomeLead(lead, {}, undefined)
-    assert.deepEqual(h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: false })
+    assert.deepEqual(await h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: false })
     work.status = 'running'
-    assert.deepEqual(h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: true })
+    work.cancel = (cause, options) => { cancels.push({ cause, options }); work.status = 'idle' }
+    assert.deepEqual(await h.manager.stopSession(lead, 'work-1'), { sessionId: 'work-1', stopped: true })
     assert.deepEqual(cancels, [{ cause: { kind: 'user' }, options: { keepInbox: true } }])
-    assert.throws(() => h.manager.stopSession(lead, 'lead-1'), /不能停止 Lead 自己/)
+    await assert.rejects(() => h.manager.stopSession(lead, 'lead-1'), /不能停止 Lead 自己/)
     other.status = 'running'
-    assert.throws(() => h.manager.stopSession(lead, 'work-other'), /不在本工作区/)
-    assert.deepEqual(h.manager.stopSession(lead, 'missing'), { sessionId: 'missing', stopped: false })
+    await assert.rejects(() => h.manager.stopSession(lead, 'work-other'), /不在本工作区/)
+    assert.deepEqual(await h.manager.stopSession(lead, 'missing'), { sessionId: 'missing', stopped: false })
     assert.equal(cancels.length, 1)
+  } finally { h.cleanup() }
+})
+
+const SWITCH_SELECTION = { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'high' }
+
+/** @param {Record<string, unknown>} [extra] */
+function switchingServices(extra = {}) {
+  return {
+    llm: {
+      resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'high' }] } }),
+      listModels: async () => [{ id: 'deepseek-reasoner' }],
+    },
+    sessionController: {
+      selectSessionModel: async request => ({
+        selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort },
+      }),
+    },
+    ...extra,
+  }
+}
+
+test('stopTimeoutSeconds 默认 60 秒，超出范围时拒绝加载', () => {
+  const validate = Config['~standard'].validate
+  assert.equal(validate(undefined).value.stopTimeoutSeconds, 60)
+  assert.equal(validate({ stopTimeoutSeconds: 15 }).value.stopTimeoutSeconds, 15)
+  assert.match(validate({ stopTimeoutSeconds: 0 }).issues[0].message, /stopTimeoutSeconds/)
+  assert.match(validate({ stopTimeoutSeconds: 3601 }).issues[0].message, /stopTimeoutSeconds/)
+})
+
+test('正在自动续跑时，换模型先停下，再恢复原来的 goal', async () => {
+  const order = []
+  let goal = { id: 'goal-1', revision: 4, phase: 'active', activation: 'armed' }
+  const h = await setup(switchingServices({
+    goals: {
+      get: () => goal,
+      disarm() { order.push('disarm'); goal = { ...goal, activation: 'disarmed' } },
+      resume(_agent, ref) {
+        order.push(`resume:${ref.revision}`)
+        goal = { ...goal, phase: 'active', activation: 'armed', revision: ref.revision + 1 }
+        return goal
+      },
+    },
+    sessionController: {
+      selectSessionModel: async request => {
+        order.push('select')
+        return { selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort } }
+      },
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => { order.push('cancel'); work.status = 'idle' }
+    work.whenIdle = async () => { order.push('idle') }
+    work.followup = () => { order.push('followup') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    const installed = await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.deepEqual(order, ['disarm', 'cancel', 'idle', 'select', 'resume:4'])
+    assert.equal(installed.stopped, true)
+    assert.equal(installed.resumed, true)
+    assert.equal(installed.model, 'deepseek-reasoner')
+  } finally { h.cleanup() }
+})
+
+test('空闲但会自动续跑时，换模型不取消当前轮，并在切换后恢复 goal', async () => {
+  const order = []
+  let goal = { id: 'goal-1', revision: 2, phase: 'active', activation: 'armed' }
+  const h = await setup(switchingServices({
+    goals: {
+      get: () => goal,
+      disarm() { order.push('disarm'); goal = { ...goal, activation: 'disarmed' } },
+      resume(_agent, ref) { order.push(`resume:${ref.revision}`); goal = { ...goal, activation: 'armed' }; return goal },
+    },
+    sessionController: {
+      selectSessionModel: async request => {
+        order.push('select')
+        return { selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort } }
+      },
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.cancel = () => { order.push('cancel') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    const installed = await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.deepEqual(order, ['disarm', 'select', 'resume:2'])
+    assert.equal(installed.stopped, false)
+    assert.equal(installed.resumed, true)
+  } finally { h.cleanup() }
+})
+
+test('空闲且没有自动续跑时，换模型不停止也不启动', async () => {
+  const h = await setup(switchingServices())
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.cancel = () => { throw new Error('不应停止') }
+    work.followup = () => { throw new Error('不应启动') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    const installed = await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.equal(installed.continued, false)
+    assert.equal(installed.resumed, false)
+    assert.equal(installed.model, 'deepseek-reasoner')
+  } finally { h.cleanup() }
+})
+
+test('正在等提问时，换模型不取消提问', async () => {
+  const h = await setup(switchingServices())
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => { throw new Error('不应停止提问') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    const [hook] = h.listeners.get('user-questions/request')
+    void hook({
+      agent: work,
+      questions: [{ id: 'q1', question: '继续吗', options: [{ label: '继续' }] }],
+      signal: new AbortController().signal,
+    }, () => new Promise(() => {}))
+    const installed = await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.equal(installed.waiting, true)
+    assert.equal(installed.stopped, false)
+  } finally { h.cleanup() }
+})
+
+test('没有 goal 也没有排队消息时，换模型后只追加一条继续消息', async () => {
+  const h = await setup(switchingServices())
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const sent = []
+    work.status = 'running'
+    work.cancel = () => { work.status = 'idle' }
+    work.followup = message => sent.push(message)
+    await h.manager.becomeLead(lead, {}, undefined)
+    const installed = await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.equal(installed.continued, true)
+    assert.equal(installed.resumed, false)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].content[0].text, '模型已切换，从当前进度继续。')
+    assert.equal(sent[0].source.kind, 'team-message')
+  } finally { h.cleanup() }
+})
+
+test('没有 goal 但有排队消息时，换模型后继续原来的消息', async () => {
+  const h = await setup(switchingServices())
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const queued = { id: 'queued-1', role: 'user', content: [{ type: 'text', text: '原来的下一条' }], source: { kind: 'user' } }
+    const sent = []
+    work.status = 'running'
+    work.cancel = () => { work.status = 'idle' }
+    work.inbox = {
+      nextTurn: [queued], nextStep: [],
+      remove(id) { assert.equal(id, queued.id); this.nextTurn = []; return true },
+    }
+    work.send = (message, target, wake) => sent.push({ message, target, wake })
+    work.followup = () => { throw new Error('不应另写继续') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    await h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined)
+    assert.deepEqual(sent, [{ message: queued, target: 'next-turn', wake: true }])
+  } finally { h.cleanup() }
+})
+
+test('模型当前不可用时，不停止会话', async () => {
+  const h = await setup(switchingServices({
+    llm: {
+      resolveModelInfo: async () => { throw new Error('不应读取') },
+      listModels: async () => [],
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => { throw new Error('不应停止') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(() => h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined), /当前不可用/)
+  } finally { h.cleanup() }
+})
+
+test('切换失败时恢复原来的自动续跑，并保留切换错误', async () => {
+  const order = []
+  let goal = { id: 'goal-1', revision: 4, phase: 'active', activation: 'armed' }
+  const h = await setup(switchingServices({
+    goals: {
+      get: () => goal,
+      disarm() { order.push('disarm'); goal = { ...goal, activation: 'disarmed' } },
+      resume(_agent, ref) { order.push(`resume:${ref.revision}`); goal = { ...goal, activation: 'armed' }; return goal },
+    },
+    sessionController: {
+      selectSessionModel: async () => { order.push('select'); throw new Error('选择失败') },
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => { order.push('cancel'); work.status = 'idle' }
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(
+      () => h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined),
+      error => error instanceof Error && error.message === '选择失败',
+    )
+    assert.deepEqual(order, ['disarm', 'cancel', 'select', 'resume:4'])
+  } finally { h.cleanup() }
+})
+
+test('goal 轮数用尽时不提高上限，并说明模型已经切换', async () => {
+  let goal = { id: 'goal-1', revision: 4, phase: 'active', activation: 'armed' }
+  const calls = []
+  const h = await setup(switchingServices({
+    goals: {
+      get: () => goal,
+      disarm() { goal = { ...goal, activation: 'disarmed' } },
+      resume() { throw new Error('goal "goal-1" exhausted 1 goal rounds') },
+    },
+    sessionController: {
+      selectSessionModel: async request => {
+        calls.push(request)
+        return { selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort } }
+      },
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => { work.status = 'idle' }
+    work.followup = () => { throw new Error('不应另写继续') }
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(
+      () => h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined),
+      /模型已切换为 deepseek-official\/deepseek-reasoner，强度 high，但自动续跑没有恢复/,
+    )
+    assert.equal(calls.length, 1)
+  } finally { h.cleanup() }
+})
+
+test('当前轮停不下来时不切换模型', async () => {
+  let selected = false
+  const h = await setup(switchingServices({
+    config: { stopTimeoutSeconds: 1 },
+    sessionController: {
+      selectSessionModel: async () => { selected = true; throw new Error('不应切换') },
+    },
+  }))
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    work.status = 'running'
+    work.cancel = () => {}
+    work.whenIdle = () => new Promise(() => {})
+    await h.manager.becomeLead(lead, {}, undefined)
+    await assert.rejects(() => h.manager.setSessionModel(lead, 'work-1', SWITCH_SELECTION, undefined), /没有停下，模型未切换/)
+    assert.equal(selected, false)
+  } finally { h.cleanup() }
+})
+
+test('stopSession 等当前轮停下后才返回，并且不继续', async () => {
+  const h = await setup()
+  try {
+    const lead = h.add('lead-1', { agentPreset: 'team-dev' })
+    const work = h.add('work-1', { agentPreset: 'main-dev' })
+    const followed = []
+    let release
+    work.status = 'running'
+    work.cancel = () => {}
+    work.whenIdle = () => new Promise(resolve => { release = () => { work.status = 'idle'; resolve() } })
+    work.followup = message => followed.push(message)
+    await h.manager.becomeLead(lead, {}, undefined)
+    let settled = false
+    const pending = h.manager.stopSession(lead, 'work-1').then(result => { settled = true; return result })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(settled, false)
+    release()
+    assert.deepEqual(await pending, { sessionId: 'work-1', stopped: true })
+    assert.deepEqual(followed, [])
   } finally { h.cleanup() }
 })
 
