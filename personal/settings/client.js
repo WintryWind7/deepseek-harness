@@ -50,11 +50,15 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary);
       }
       .ps-list { display: flex; flex-direction: column; gap: 4px; max-width: 480px; }
+      /* 行高写死成 13px 字号在主题里的既有配对（--dsw-font-xs-13: 13px/20px）。
+         不写就继承 normal，行高随平台字体浮动，总高也就不是固定值。
+         总高 52px = 20px 行高 + 15px 上下内边距 + 1px 上下边框，和官方「插件」节里
+         可点条目卡片 .cardContent 的 min-height: 52px 对齐。 */
       .ps-row {
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
         width: 100%; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
-        padding: 10px 12px; background: transparent; cursor: pointer;
-        color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; text-align: start;
+        padding: 15px 12px; background: transparent; cursor: pointer;
+        color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 20px; text-align: start;
       }
       .ps-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
       .ps-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary); }
