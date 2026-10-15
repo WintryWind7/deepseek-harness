@@ -519,7 +519,7 @@ window.__ModuleLoader__.load({
               h('button', { type:'button', className:'wt-button', disabled:query.loading, onClick:refresh }, t('refresh')),
               h('button', { type:'button', className:'wt-button', 'aria-label':t('close'), onClick:() => setOpen(false) }, '×')),
             holder
-              ? h(TeamBody, { query, refreshTeam:refresh, openSession, t })
+              ? h(TeamBody, { query, refreshTeam:refresh, openSession, act:holder.act, t })
               : h('p', { className:'wt-empty' }, t('noSession')))));
     }
 
