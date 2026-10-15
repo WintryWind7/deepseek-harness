@@ -37,6 +37,12 @@ window.__ModuleLoader__.load({
       removeMember: '移出管理',
       becomeLead: '成为 Lead',
       loseLead: '失去 Lead',
+      renameMember: '重命名',
+      renameTitle: '重命名会话',
+      renameLabel: '新标题',
+      renameOk: '保存',
+      renameEmpty: '标题不能为空',
+      renameFailed: '没有改成标题：{message}',
       confirmTakeoverTitle: '替换 Lead',
       confirmTakeoverBody: '当前团队已有 Lead：{title}。继续会让这个会话成为新的 Lead，现任名下的 {count} 个成员会全部转到它名下。',
       confirmTakeoverOk: '替换 Lead',
@@ -90,6 +96,12 @@ window.__ModuleLoader__.load({
       removeMember: 'Remove from team',
       becomeLead: 'Become Lead',
       loseLead: 'Give up Lead',
+      renameMember: 'Rename',
+      renameTitle: 'Rename session',
+      renameLabel: 'New title',
+      renameOk: 'Save',
+      renameEmpty: 'Title cannot be blank',
+      renameFailed: 'Could not rename: {message}',
       confirmTakeoverTitle: 'Replace the Lead',
       confirmTakeoverBody: 'This team already has a Lead: {title}. Continuing makes this session the new Lead, and all {count} members move to it.',
       confirmTakeoverOk: 'Replace Lead',
@@ -172,6 +184,8 @@ window.__ModuleLoader__.load({
       .wt-awaytip { position:absolute; left:50%; bottom:calc(100% + 8px); z-index:30; width:max-content; max-width:240px; padding:8px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); box-shadow:0 8px 24px rgba(0,0,0,.12); font-size:12px; line-height:18px; text-align:left; white-space:normal; pointer-events:none; opacity:0; transform:translateX(-50%); }
       .wt-away:hover .wt-awaytip,.wt-away:focus-within .wt-awaytip { opacity:1; }
       .wt-awaytip strong { display:block; font-weight:500; }
+      .wt-field { width:100%; min-height:32px; margin:6px 0 2px; padding:5px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); font:inherit; }
+      .wt-field:focus-visible { outline:2px solid var(--dsw-alias-brand-primary); outline-offset:1px; }
       .wt-overlay { position:fixed; inset:0; z-index:60; display:flex; align-items:flex-start; justify-content:center; padding:10vh 16px 16px; background:var(--dsw-alias-overlay, rgba(0,0,0,.4)); }
       .wt-dialog { width:min(560px,100%); max-height:80vh; overflow:auto; padding:16px; border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-md); background:var(--dsw-alias-bg-layer-1); box-shadow:0 12px 40px rgba(0,0,0,.24); }
       @keyframes wt-pulse { to { opacity:.5; } }
@@ -286,27 +300,34 @@ window.__ModuleLoader__.load({
         /**
          * 面板写操作。进行中与失败都折进同一个快照，面板复用现有订阅就能看到，
          * 不需要另加一条管道。失败只改快照，不动列表里已有的数据。
-         * @param {string} target @param {string} action
+         * @param {string} target @param {string} action @param {string} [title] 只有 `rename` 使用
+         * @returns {Promise<boolean>} 成功为 true；调用方据此决定关掉弹窗还是留在原地显示错误
          */
-        async act(target, action) {
-          if (disposed) return;
+        async act(target, action, title) {
+          if (disposed) return false;
           publish({ acting: target, actError:null });
           try {
             const response = await fetch(ROUTE, {
               method:'POST', credentials:'same-origin', cache:'no-store',
               headers:{ accept:'application/json', 'content-type':'application/json' },
-              body: JSON.stringify({ sessionId, action, ...(target === undefined ? {} : { target }) }),
+              body: JSON.stringify({
+                sessionId, action,
+                ...(target === undefined ? {} : { target }),
+                ...(title === undefined ? {} : { title }),
+              }),
             });
             const body = await response.json().catch(() => null);
             if (!response.ok || body?.ok !== true) {
               const message = typeof body?.error === 'string' ? body.error : ('HTTP ' + response.status);
               if (!disposed) publish({ acting:null, actError:message });
-              return;
+              return false;
             }
             if (!disposed) publish({ acting:null, actError:null });
             await load();
+            return true;
           } catch (error) {
             if (!disposed) publish({ acting:null, actError: error?.message ?? String(error) });
+            return false;
           }
         },
         dispose() { disposed = true; holders.clear(); pause(); listeners.clear(); },
@@ -318,7 +339,7 @@ window.__ModuleLoader__.load({
       return t(Object.hasOwn(keys, reason) ? keys[reason] : 'otherReason');
     }
 
-    function SessionRow({ row, openSession, act, onBecomeLead, busy, t }) {
+    function SessionRow({ row, openSession, act, onBecomeLead, onRename, canRename, busy, t }) {
       const acting = busy === row.sessionId;
       const turn = row.latestTurn;
       const message = turn == null ? row.latestMessage : null;
@@ -337,6 +358,7 @@ window.__ModuleLoader__.load({
             : row.managed
               ? h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => act(row.sessionId, 'remove') }, t('removeMember'))
               : h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => act(row.sessionId, 'add') }, t('addMember')),
+          canRename && h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => onRename(row.sessionId, row.title) }, t('renameMember')),
           row.canBeLead && h('button', { type:'button', className:'wt-button', disabled:acting, onClick:() => onBecomeLead(row.sessionId, row.title) }, t('becomeLead')),
           acting && h('span', { className:'wt-note' }, t('acting'))),
         result == null ? h('p', { className:'wt-note' }, t('noResult')) :
@@ -351,15 +373,32 @@ window.__ModuleLoader__.load({
 
     /**
      * 面板正文：当前工作目录下的根会话列表，加上团队摘要与每行的管理按钮。
-     * 样式与标题由调用方提供，这里负责状态、失败提示、摘要、列表与接管确认。
+     * 样式与标题由调用方提供，这里负责状态、失败提示、摘要、列表、接管确认与改名弹窗。
+     * `viewerIsLead` 决定要不要显示改名按钮：服务端仍会独立拒绝非 Lead 的改名请求。
      */
-    function TeamBody({ query, refreshTeam, openSession, act, t }) {
+    function TeamBody({ query, refreshTeam, openSession, act, viewerIsLead, t }) {
       const data = query.data;
       const [pending, setPending] = useState(null);
+      const [renaming, setRenaming] = useState(null);
+      const [draft, setDraft] = useState('');
+      const inputRef = useRef(null);
       const askBecomeLead = (id, title) => {
         // 已有 Lead 时先确认：接管会把现任名下的成员全部转过来。
         if (data != null && data.lead != null) setPending({ id, title });
         else act(id, 'become-lead');
+      };
+      const askRename = (id, title) => { setRenaming({ id }); setDraft(title); };
+      const closeRename = () => { setRenaming(null); setDraft(''); };
+      const trimmedDraft = draft.trim();
+      useEffect(() => {
+        if (renaming === null) return;
+        const node = inputRef.current;
+        // 打开就全选，用户可以直接输入覆盖原来的标题。
+        if (node) { node.focus(); node.select(); }
+      }, [renaming]);
+      const confirmRename = async () => {
+        if (renaming === null || trimmedDraft === '') return;
+        if (await act(renaming.id, 'rename', trimmedDraft)) closeRename();
       };
       return h('div', { className:'wt-body', 'aria-busy':query.loading },
         query.failed && h('div', { className:'wt-notice', 'data-error':true, role:'alert' },
@@ -381,8 +420,26 @@ window.__ModuleLoader__.load({
                 h('span', { className:'wt-caption' }, t('roots', { count:data.sessions.length }))),
               data.sessions.length === 0 ? h('p', { className:'wt-empty' }, t('noMembers')) :
                 h('ul', { className:'wt-list' }, data.sessions.map(row => h(SessionRow, {
-                  key:row.sessionId, row, openSession, act, busy:query.acting, onBecomeLead:askBecomeLead, t,
+                  key:row.sessionId, row, openSession, act, busy:query.acting, onBecomeLead:askBecomeLead,
+                  onRename:askRename, canRename:viewerIsLead && row.managed, t,
                 })))),
+          renaming !== null && h('div', { className:'wt-overlay', role:'dialog', 'aria-modal':true, 'aria-label':t('renameTitle'), 'data-dsh-part':'dialog' },
+            h('div', { className:'wt-card wt-dialog' },
+              h('div', { className:'wt-head' }, h('h2', { className:'wt-heading' }, t('renameTitle'))),
+              h('span', { className:'wt-caption' }, t('renameLabel')),
+              h('input', {
+                ref:inputRef, className:'wt-field', value:draft, 'aria-label':t('renameLabel'),
+                onChange: event => setDraft(event.target.value),
+                onKeyDown: event => {
+                  if (event.key === 'Enter') { event.preventDefault(); void confirmRename(); }
+                  if (event.key === 'Escape') { event.preventDefault(); closeRename(); }
+                },
+              }),
+              trimmedDraft === '' && h('p', { className:'wt-note' }, t('renameEmpty')),
+              query.actError != null && h('p', { className:'wt-note wt-delivery' }, t('renameFailed', { message:query.actError })),
+              h('div', { className:'wt-actions' },
+                h('button', { type:'button', className:'wt-button', disabled:query.acting != null || trimmedDraft === '', onClick:() => void confirmRename() }, t('renameOk')),
+                h('button', { type:'button', className:'wt-button', disabled:query.acting != null, onClick:closeRename }, t('cancel'))))),
           pending !== null && h('div', { className:'wt-overlay', role:'dialog', 'aria-modal':true, 'aria-label':t('confirmTakeoverTitle'), 'data-dsh-part':'dialog' },
             h('div', { className:'wt-card wt-dialog' },
               h('div', { className:'wt-head' }, h('h2', { className:'wt-heading' }, t('confirmTakeoverTitle'))),
@@ -405,7 +462,7 @@ window.__ModuleLoader__.load({
         h('header', { className:'wt-head' },
           h('h2', { className:'wt-heading' }, t('title')),
           h('button', { type:'button', className:'wt-button', disabled:query.loading, onClick:refreshTeam }, t('refresh'))),
-        h(TeamBody, { query, refreshTeam, openSession, act, t }));
+        h(TeamBody, { query, refreshTeam, openSession, act, viewerIsLead: sessionId !== undefined && query.data?.lead?.sessionId === sessionId, t }));
     }
 
     /**
@@ -519,7 +576,7 @@ window.__ModuleLoader__.load({
               h('button', { type:'button', className:'wt-button', disabled:query.loading, onClick:refresh }, t('refresh')),
               h('button', { type:'button', className:'wt-button', 'aria-label':t('close'), onClick:() => setOpen(false) }, '×')),
             holder
-              ? h(TeamBody, { query, refreshTeam:refresh, openSession, act:holder.act, t })
+              ? h(TeamBody, { query, refreshTeam:refresh, openSession, act:holder.act, viewerIsLead:isLead, t })
               : h('p', { className:'wt-empty' }, t('noSession')))));
     }
 

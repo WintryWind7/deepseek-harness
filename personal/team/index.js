@@ -548,8 +548,50 @@ export function createManager(ctx, config) {
     return { sessionId: id, managed: true }
   }
 
+  /**
+   * 改一个受管理成员的标题。调用方先确定允许改它的 Lead；这里核对归属、根会话身份与
+   * 工作目录，校验都过完才在 exclusive 里拉活 —— 顺序照 setSessionModel 的理由，先核对
+   * 目录再恢复，避免把别的工作区的冷会话载入本进程。
+   * @param {string} leadId 允许改这个会话的 Lead @param {string} id @param {string} title
+   * @param {AbortSignal | undefined} signal
+   * @returns {Promise<{sessionId: string, title: string, seq: number}>}
+   */
+  const renameMember = async (leadId, id, title, signal) => {
+    const row = records.get(id)
+    if (!row || row.leadId !== leadId) throw new Error(`会话 ${id} 不在你的管理范围`)
+    const wanted = requiredText(title, 'title')
+    const live = ctx.agents.get(id)
+    let header = live?.session.header
+    if (header === undefined) {
+      try {
+        header = await observe(ctx, id, signalFor(signal), snapshot => snapshot.header)
+      } catch (error) {
+        throw new Error(`找不到会话 ${id}：${error?.message ?? error}`)
+      }
+    }
+    assertRoot(header, ctx)
+    if (header.cwd !== row.cwd) throw new Error(`会话 ${id} 不在本工作区 ${row.cwd}`)
+    const titles = ctx.get('sessionTitle')
+    if (titles === undefined) throw new Error('会话标题服务不可用')
+    return exclusive(id, async () => {
+      if (closed) throw new Error('团队管理插件已卸载')
+      let agent = ctx.agents.get(id)
+      if (agent === undefined) {
+        try { agent = await ensureAgent(id, signal) }
+        catch (error) { throw new Error(`会话 ${id} 没有载入，标题未改：${error?.message ?? error}`) }
+      }
+      try {
+        const accepted = titles.rename(agent.session, wanted)
+        return { sessionId: id, title: accepted.title, seq: accepted.eventSeq }
+      } catch (error) {
+        if (error?.name === 'SessionTitleInvalidError') throw new Error('标题必须包含可见字符')
+        throw error
+      }
+    })
+  }
+
   const manager = {
-    config, track, changed, noteInbound, assertLead, becomeLead, ensureAgent,
+    config, track, changed, noteInbound, assertLead, becomeLead, ensureAgent, renameMember,
     owner: id => records.get(id),
     async load() {
       const corpus = await ctx.sessionQuery.listSessions(shutdown.signal)
@@ -591,13 +633,16 @@ export function createManager(ctx, config) {
       return seatMember(lead.id, cwd, id, signal, lead)
     },
     /**
-     * 面板写操作。操作者是人不是 Lead，所以不走 assertLead；cwd、根会话、一个工作区
-     * 一个 Lead、成员互斥这些不变式照旧强制。接管由用户在界面上确认，不再走服务端弹问
-     * —— 打开面板的会话可能是冷的，而 userQuestions.ask 要求精确的 live 根 agent。
-     * @param {string} viewedId @param {string} action @param {string | undefined} targetId @param {AbortSignal | undefined} signal
+     * 面板写操作。除「重命名」外操作者是人不是 Lead，所以不走 assertLead；cwd、根会话、
+     * 一个工作区一个 Lead、成员互斥这些不变式照旧强制。改名是唯一要求请求方就是本工作区
+     * Lead 的动作，服务端独立校验，不靠界面上隐藏按钮。接管由用户在界面上确认，不再走
+     * 服务端弹问 —— 打开面板的会话可能是冷的，而 userQuestions.ask 要求精确的 live 根 agent。
+     * @param {string} viewedId @param {string} action @param {string | undefined} targetId
+     * @param {AbortSignal | undefined} signal
+     * @param {string | undefined} title 只有 `rename` 使用：新的会话标题
      */
     autoReplyOn: id => autoReply.has(id),
-    async panelAct(viewedId, action, targetId, signal) {
+    async panelAct(viewedId, action, targetId, signal, title) {
       const viewed = await observe(ctx, viewedId, signalFor(signal), snapshot => snapshot)
       const cwd = requiredText(viewed.header.cwd, '面板会话工作目录')
       const ids = (await usableSessions(signal)).ids
@@ -610,6 +655,11 @@ export function createManager(ctx, config) {
         else autoReply.delete(viewedId)
         if (enabled) questions?.answerOwn(viewedId)
         return { action, enabled }
+      }
+      if (action === 'rename') {
+        if (seated === undefined) throw new Error('本工作区还没有 Lead')
+        if (viewedId !== seated) throw new Error('只有本工作区的 Lead 可以改会话标题')
+        return { action, ...(await renameMember(seated, requiredText(targetId, 'target'), title, signal)) }
       }
       if (action === 'lose-lead') {
         if (seated === undefined) throw new Error('本工作区还没有 Lead')
@@ -769,6 +819,17 @@ export function createManager(ctx, config) {
         }
         return { ...installed, stopped: true, continued: true, resumed: false, waiting: false }
       })
+    },
+    /**
+     * 工具入口：改一个本工作区受管理成员的标题。不能改 Lead 自己；目标没载入本进程时
+     * 先载入再改，不会开始新一轮。
+     * @param {any} lead @param {string} id @param {string} title @param {AbortSignal | undefined} signal
+     * @returns {Promise<{sessionId: string, title: string, seq: number}>}
+     */
+    async renameSession(lead, id, title, signal) {
+      assertLead(lead)
+      if (id === lead.id) throw new Error('不能改 Lead 自己的标题')
+      return renameMember(lead.id, id, title, signal)
     },
     /**
      * 列出本进程当前可用的模型，供 Lead 填 `open_session` 与 `set_session_model` 的模型参数。
@@ -1070,8 +1131,9 @@ export async function apply(ctx, config) {
               const sessionId = requiredText(body?.sessionId, 'sessionId')
               const action = requiredText(body?.action, 'action')
               const target = body?.target === undefined ? undefined : requiredText(body.target, 'target')
+              const title = body?.title === undefined ? undefined : requiredText(body.title, 'title')
               return new Response(
-                JSON.stringify({ ok: true, ...(await manager.panelAct(sessionId, action, target, request.signal)) }),
+                JSON.stringify({ ok: true, ...(await manager.panelAct(sessionId, action, target, request.signal, title)) }),
                 { headers },
               )
             }

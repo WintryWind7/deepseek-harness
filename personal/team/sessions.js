@@ -95,6 +95,13 @@ export function apply(ctx) {
       if (value.continued) return `已停止 ${value.sessionId} 的当前轮，切换为 ${label}，并从当前进度继续。`
       return `已改 ${value.sessionId} 的下一次请求：${label}。会话当时没有在跑，也没有自动续跑，所以没有启动它。`
     }),
+    tool('rename_session', '改一个受管理成员会话的标题。目标必须是本工作目录下你管理的根会话，不能改你自己。会话没载入本进程时会先把它载入（不会开始新一轮），再改标题。', {
+      session_id: { type: 'string', description: '目标根会话 id。' },
+      title: { type: 'string', description: '新的会话标题。过长会按会话标题上限截断，只有清洗后没有可见字符才会被拒绝。' },
+    }, ['session_id', 'title'], async (args, exec) => {
+      const caller = lead(exec)
+      return manager().renameSession(caller, requiredText(args.session_id, 'session_id'), requiredText(args.title, 'title'), exec.signal)
+    }, value => `已把会话 ${value.sessionId} 的标题改为「${value.title}」。`),
     tool('list_models', '列出本进程当前可用的模型：提供方、模型 id、名称，以及每个模型支持的推理强度 id 和默认值。要给会话指定或更换模型，先用它查准取值；它只读，不改任何会话。', {
       provider: { type: 'string', description: '只看这一个提供方 id；省略时列出全部。' },
     }, [], (args, exec) => manager().listModels(lead(exec), args),
