@@ -493,7 +493,7 @@ window.__ModuleLoader__.load({
         useTabInfo: () => ({ tab: { visible: true, actions: {} } }),
         retainTeam: () => () => {},
         refreshTeam: () => holder?.refresh(),
-        act: (target, action) => holder?.act(target, action),
+        act: (target, action, title) => holder?.act(target, action, title),
         openSession,
         t,
       });
