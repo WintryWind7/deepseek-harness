@@ -300,11 +300,13 @@ window.__ModuleLoader__.load({
         /**
          * 面板写操作。进行中与失败都折进同一个快照，面板复用现有订阅就能看到，
          * 不需要另加一条管道。失败只改快照，不动列表里已有的数据。
+         * 返回值只给发起这次操作的调用方用（弹窗要显示本次的原因）；共用快照里的
+         * actError 仍是顶部通知条的来源，这里不清它，免得抹掉别处还没看到的失败提示。
          * @param {string} target @param {string} action @param {string} [title] 只有 `rename` 使用
-         * @returns {Promise<boolean>} 成功为 true；调用方据此决定关掉弹窗还是留在原地显示错误
+         * @returns {Promise<{ok: true} | {ok: false, error: string}>} 失败时 error 是这一次的原因
          */
         async act(target, action, title) {
-          if (disposed) return false;
+          if (disposed) return { ok: false, error: '' };
           publish({ acting: target, actError:null });
           try {
             const response = await fetch(ROUTE, {
@@ -320,14 +322,15 @@ window.__ModuleLoader__.load({
             if (!response.ok || body?.ok !== true) {
               const message = typeof body?.error === 'string' ? body.error : ('HTTP ' + response.status);
               if (!disposed) publish({ acting:null, actError:message });
-              return false;
+              return { ok: false, error: message };
             }
             if (!disposed) publish({ acting:null, actError:null });
             await load();
-            return true;
+            return { ok: true };
           } catch (error) {
-            if (!disposed) publish({ acting:null, actError: error?.message ?? String(error) });
-            return false;
+            const message = error?.message ?? String(error);
+            if (!disposed) publish({ acting:null, actError:message });
+            return { ok: false, error: message };
           }
         },
         dispose() { disposed = true; holders.clear(); pause(); listeners.clear(); },
@@ -375,20 +378,23 @@ window.__ModuleLoader__.load({
      * 面板正文：当前工作目录下的根会话列表，加上团队摘要与每行的管理按钮。
      * 样式与标题由调用方提供，这里负责状态、失败提示、摘要、列表、接管确认与改名弹窗。
      * `viewerIsLead` 决定要不要显示改名按钮：服务端仍会独立拒绝非 Lead 的改名请求。
+     * 改名弹窗只显示本次尝试的原因，不读共用快照里的 actError，避免串到别的操作的失败上。
      */
     function TeamBody({ query, refreshTeam, openSession, act, viewerIsLead, t }) {
       const data = query.data;
       const [pending, setPending] = useState(null);
       const [renaming, setRenaming] = useState(null);
       const [draft, setDraft] = useState('');
+      // 弹窗只显示这一次改名失败的原因：共用快照里的 actError 可能是上一次别的写操作留下的。
+      const [renameError, setRenameError] = useState('');
       const inputRef = useRef(null);
       const askBecomeLead = (id, title) => {
         // 已有 Lead 时先确认：接管会把现任名下的成员全部转过来。
         if (data != null && data.lead != null) setPending({ id, title });
         else act(id, 'become-lead');
       };
-      const askRename = (id, title) => { setRenaming({ id }); setDraft(title); };
-      const closeRename = () => { setRenaming(null); setDraft(''); };
+      const askRename = (id, title) => { setRenaming({ id }); setDraft(title); setRenameError(''); };
+      const closeRename = () => { setRenaming(null); setDraft(''); setRenameError(''); };
       const trimmedDraft = draft.trim();
       useEffect(() => {
         if (renaming === null) return;
@@ -398,7 +404,9 @@ window.__ModuleLoader__.load({
       }, [renaming]);
       const confirmRename = async () => {
         if (renaming === null || trimmedDraft === '') return;
-        if (await act(renaming.id, 'rename', trimmedDraft)) closeRename();
+        const result = await act(renaming.id, 'rename', trimmedDraft);
+        if (result.ok) closeRename();
+        else setRenameError(result.error);
       };
       return h('div', { className:'wt-body', 'aria-busy':query.loading },
         query.failed && h('div', { className:'wt-notice', 'data-error':true, role:'alert' },
@@ -436,7 +444,7 @@ window.__ModuleLoader__.load({
                 },
               }),
               trimmedDraft === '' && h('p', { className:'wt-note' }, t('renameEmpty')),
-              query.actError != null && h('p', { className:'wt-note wt-delivery' }, t('renameFailed', { message:query.actError })),
+              renameError !== '' && h('p', { className:'wt-note wt-delivery' }, t('renameFailed', { message:renameError })),
               h('div', { className:'wt-actions' },
                 h('button', { type:'button', className:'wt-button', disabled:query.acting != null || trimmedDraft === '', onClick:() => void confirmRename() }, t('renameOk')),
                 h('button', { type:'button', className:'wt-button', disabled:query.acting != null, onClick:closeRename }, t('cancel'))))),
