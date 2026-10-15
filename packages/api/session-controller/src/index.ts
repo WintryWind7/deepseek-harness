@@ -298,6 +298,7 @@ export class SessionController extends TypertRemoteService {
    * @param request - Session identity and requested model selection.
    * @returns the normalized selection installed for the Session.
    */
+  @Remote('selectSessionModel')
   selectSessionModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
     return this.commands.selectSessionModel(request)
   }
