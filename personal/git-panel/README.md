@@ -11,7 +11,7 @@ message.
 ## Use it
 
 The control sits in `conversation.input.left`, beside the shipped composer controls. Clicking it opens a dialog. The
-dialog's footer re-reads Git state and, while older commits remain, extends the history by another page.
+dialog's footer asks for the next history page and, while older commits remain, extends the list.
 
 The panel reports:
 
@@ -46,14 +46,24 @@ rejected. Remotes that already have this commit are left alone. The choice of re
 The Host half registers one authenticated `/api/git.panel` route through `ctx.connection.fetch`. GET reads the panel.
 POST adds, edits, or removes a remote, saves the shortcut selection, or runs the fast-forward push. The working
 directory comes from the Session header, never from the request, so the browser cannot aim Git at an arbitrary
-directory. Arguments are fixed argv; no shell parses a path, a remote name, or a URL. A read runs two commands:
+directory. Arguments are fixed argv; no shell parses a path, a remote name, or a URL.
+
+One panel read runs four commands together rather than one after another, because none of them supplies another's
+arguments:
 
 ```text
 git status --porcelain=v1 -b -z --untracked-files=all
 git log --branches --tags --remotes HEAD --topo-order --max-count=<n+1> --format=%H%x00%P%x00%an%x00%at%x00%D%x00%s%x1e
+git remote -v
+git config --local --get-regexp ^wintry\.gitpanel\.
 ```
 
-Both use fixed argv: no shell parses a path or branch name.
+The status read supplies the branch the per-remote tracking checks need, so those checks run after it inside the same
+request. `scope=history` serves the log command alone: a larger window cannot change the branch, the changed files, or
+the remotes, which is what makes the footer's "load more" cheap. Each command carries a deadline (20 s locally, 60 s on
+the network). A missed deadline on the status read answers `504` with `code: "timeout"`, which the panel reports as a
+timeout the Refresh button retries; a missed deadline anywhere else degrades only that section. Fixed argv throughout:
+no shell parses a path or branch name.
 
 ### Reading `git status`
 
@@ -121,9 +131,9 @@ was adapted and how it differs.
 Installed into the `web` profile as a link. The two halves reload differently:
 
 - **`client.js`** is re-fetched from disk on page refresh, so a browser-side change needs only a refresh.
-- **`index.js`, `parse.js`, and `lanes.js`** are resolved once and then held in the process's module registry. Editing
-  them does not affect the running process, and a plugin reload through the patch layer does not evict them either.
-  A Host-side change needs a `dsh web` restart.
+- **`index.js`, `parse.js`, and `lanes.js`** are resolved once and then held in the process's module registry. A plugin
+  reload through the patch layer does not evict them, so a Host-side change needs this package directory watched by
+  `hmr` (the `web` profile lists it under `root:`) or a `dsh web` restart.
 
 While the two halves disagree, the panel's response normalizer keeps the mismatch from breaking the render: a Host
 that predates a field yields the empty default for it rather than an exception.
@@ -132,5 +142,7 @@ that predates a field yields the empty default for it rather than an exception.
 
 - It does not stage, commit, switch branches, pull, force-push, or create a branch on a remote.
 - Opening a commit does not show its patch, and clicking a file does not show that file's diff.
+- The history page size is capped at 500 commits. The footer stops offering more at that cap, so older commits are not
+  reachable from the panel.
 - The panel reads Git state when opened, when refreshed, and when the history is extended. It does not watch the
   repository, so an external change appears only after one of those.

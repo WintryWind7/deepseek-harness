@@ -37,6 +37,11 @@ window.__ModuleLoader__.load({
     const INITIAL_LIMIT = 200;
     /** Commits one "load more" adds. */
     const PAGE_STEP = 100;
+    /**
+     * Backstop on one panel read. The Host gives each git command a shorter
+     * deadline of its own, so this only covers a request that never reaches it.
+     */
+    const READ_TIMEOUT_MS = 25_000;
 
     const zh = {
       trigger: 'Git 状态',
@@ -44,6 +49,7 @@ window.__ModuleLoader__.load({
       close: '关闭',
       refresh: '刷新',
       loading: '正在读取 Git 状态…',
+      timeout: 'Git 读取超时，点「刷新」重试。',
       notGit: '当前工作目录不是 Git 仓库。',
       emptyRepo: '仓库还没有任何提交。',
       noCommits: '没有可显示的提交。',
@@ -129,6 +135,7 @@ window.__ModuleLoader__.load({
       close: 'Close',
       refresh: 'Refresh',
       loading: 'Reading Git state…',
+      timeout: 'Reading Git timed out; use Refresh to try again.',
       notGit: 'The working directory is not a Git repository.',
       emptyRepo: 'The repository has no commits yet.',
       noCommits: 'No commits to show.',
@@ -489,6 +496,39 @@ window.__ModuleLoader__.load({
     const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
     /**
+     * Coerce one commit list from a read response.
+     * @param raw - the response's `commits` field.
+     * @returns the commit rows the graph renders.
+     */
+    function normalizeCommits(raw) {
+      return (Array.isArray(raw) ? raw : [])
+        .filter(commit => commit !== null && typeof commit === 'object')
+        .map(commit => ({
+          oid: typeof commit.oid === 'string' ? commit.oid : '',
+          subject: typeof commit.subject === 'string' ? commit.subject : '',
+          author: typeof commit.author === 'string' ? commit.author : '',
+          authorTime: Number.isFinite(commit.authorTime) ? commit.authorTime : 0,
+          refs: (Array.isArray(commit.refs) ? commit.refs : [])
+            .filter(ref => ref !== null && typeof ref === 'object' && typeof ref.name === 'string')
+            .map(ref => ({
+              name: ref.name,
+              kind: ref.kind === 'head' || ref.kind === 'tag' ? ref.kind : 'ref',
+            })),
+        }));
+    }
+
+    /**
+     * Coerce one lane-glyph matrix from a read response.
+     * @param raw - the response's `lanes` field.
+     * @returns the lane rows the graph renders.
+     */
+    function normalizeLanes(raw) {
+      return (Array.isArray(raw) ? raw : [])
+        .map(row => (Array.isArray(row) ? row : [])
+          .map(glyph => (GLYPH_KEYS.has(glyph) ? glyph : 'gap')));
+    }
+
+    /**
      * Normalize one response envelope into the value the panel renders.
      *
      * The panel crosses both a process boundary and a module generation to
@@ -524,23 +564,8 @@ window.__ModuleLoader__.load({
           })),
         truncated: value.truncated === true,
         limit: Number.isFinite(value.limit) ? value.limit : INITIAL_LIMIT,
-        commits: (Array.isArray(value.commits) ? value.commits : [])
-          .filter(commit => commit !== null && typeof commit === 'object')
-          .map(commit => ({
-            oid: typeof commit.oid === 'string' ? commit.oid : '',
-            subject: typeof commit.subject === 'string' ? commit.subject : '',
-            author: typeof commit.author === 'string' ? commit.author : '',
-            authorTime: num(commit.authorTime),
-            refs: (Array.isArray(commit.refs) ? commit.refs : [])
-              .filter(ref => ref !== null && typeof ref === 'object' && typeof ref.name === 'string')
-              .map(ref => ({
-                name: ref.name,
-                kind: ref.kind === 'head' || ref.kind === 'tag' ? ref.kind : 'ref',
-              })),
-          })),
-        lanes: (Array.isArray(value.lanes) ? value.lanes : [])
-          .map(row => (Array.isArray(row) ? row : [])
-            .map(glyph => (GLYPH_KEYS.has(glyph) ? glyph : 'gap'))),
+        commits: normalizeCommits(value.commits),
+        lanes: normalizeLanes(value.lanes),
         hasMore: value.hasMore === true,
         historyFailed: value.historyFailed === true,
         // A Host generation that predates this field answers without it. That is
@@ -557,6 +582,29 @@ window.__ModuleLoader__.load({
             push: remote.push === true,
             unsafe: remote.unsafe === true,
           })),
+      };
+    }
+
+    /**
+     * Normalize one history-window response.
+     *
+     * "Load more" asks the Host for the history window alone, so the response
+     * carries only what that window can change. A Host generation that predates
+     * the window answers with a whole panel value instead, which fails this
+     * check and is reported as a failed history read rather than merged.
+     * @param body - the parsed JSON body.
+     * @returns the window, or null when the body is not one.
+     */
+    function normalizeHistory(body) {
+      if (body === null || typeof body !== 'object' || body.ok !== true) return null;
+      const value = body.value;
+      if (value === null || typeof value !== 'object' || value.kind !== 'history') return null;
+      return {
+        limit: Number.isFinite(value.limit) ? value.limit : INITIAL_LIMIT,
+        commits: normalizeCommits(value.commits),
+        lanes: normalizeLanes(value.lanes),
+        hasMore: value.hasMore === true,
+        historyFailed: value.historyFailed === true,
       };
     }
 
@@ -1104,29 +1152,65 @@ window.__ModuleLoader__.load({
       // A slow earlier read must never overwrite a newer one.
       const seq = useRef(0);
 
-      const load = useCallback((limit, quiet) => {
+      /**
+       * Read the panel, or one history window when `scope` asks for it.
+       * @param limit - commits to ask for.
+       * @param quiet - keep the current body instead of showing the loading text.
+       * @param scope - `'history'` for a window that only moves the commit list.
+       */
+      const load = useCallback((limit, quiet, scope) => {
         if (typeof sessionId !== 'string' || sessionId === '') {
           setRead({ status: 'failed', message: t('noSession') });
           return;
         }
         seq.current += 1;
         const mine = seq.current;
+        const history = scope === 'history';
         setBusy(true);
         if (quiet !== true && limit === INITIAL_LIMIT) setRead({ status: 'loading' });
-        fetch(ROUTE + '?sessionId=' + encodeURIComponent(sessionId) + '&limit=' + String(limit),
-          { headers: { accept: 'application/json' } })
+        // The Host deadline is shorter than this one, so a classified timeout
+        // normally arrives as a body; this backstop only covers a request that
+        // never reaches the Host at all.
+        const controller = new AbortController();
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; controller.abort(); }, READ_TIMEOUT_MS);
+        fetch(ROUTE + '?sessionId=' + encodeURIComponent(sessionId) + '&limit=' + String(limit)
+          + (history ? '&scope=history' : ''),
+        { headers: { accept: 'application/json' }, signal: controller.signal })
           .then(response => response.json())
           .then(body => {
             if (mine !== seq.current) return;
+            const timedOutBody = body !== null && typeof body === 'object' && body.code === 'timeout';
+            if (history) {
+              const page = normalizeHistory(body);
+              if (page === null || page.historyFailed) {
+                // The list already on screen stays; only the window failed.
+                setNotice({ tone: 'error', text: timedOutBody || timedOut ? t('timeout') : t('historyFailed') });
+                return;
+              }
+              setRead(current => current.status === 'ready'
+                ? { status: 'ready', value: { ...current.value, ...page } }
+                : current);
+              return;
+            }
+            if (timedOutBody) {
+              setRead({ status: 'failed', message: t('timeout') });
+              return;
+            }
             const value = normalize(body);
             if (value === null) setRead({ status: 'failed', message: t('errorInternal') });
             else setRead({ status: 'ready', value });
           })
           .catch(() => {
             if (mine !== seq.current) return;
-            setRead({ status: 'failed', message: t('errorUnavailable') });
+            if (history) {
+              setNotice({ tone: 'error', text: timedOut ? t('timeout') : t('historyFailed') });
+              return;
+            }
+            setRead({ status: 'failed', message: timedOut ? t('timeout') : t('errorUnavailable') });
           })
           .finally(() => {
+            clearTimeout(timer);
             if (mine === seq.current) setBusy(false);
           });
       }, [sessionId, t]);
@@ -1144,7 +1228,7 @@ window.__ModuleLoader__.load({
         load(read.status === 'ready' ? read.value.limit : INITIAL_LIMIT);
       }, [load, read]);
       const loadMore = useCallback(() => {
-        if (read.status === 'ready') load(read.value.limit + PAGE_STEP);
+        if (read.status === 'ready') load(read.value.limit + PAGE_STEP, false, 'history');
       }, [load, read]);
 
       const mutate = useCallback((action, extra) => {

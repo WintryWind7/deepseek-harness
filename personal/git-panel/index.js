@@ -56,6 +56,8 @@ const OID = /^[0-9a-f]{40,64}$/i
 const PUSH_CONFIGURED = 'wintry.gitpanel.pushConfigured'
 /** Local config multivar: remote names included in the one-click push. */
 const PUSH_REMOTE = 'wintry.gitpanel.push'
+/** Anchored pattern reading both one-click keys in one `git config` call. */
+const SELECTION_PATTERN = '^wintry\\.gitpanel\\.'
 /**
  * Keeps credential helpers from opening a prompt. A missing credential fails
  * the command instead of parking the route.
@@ -154,17 +156,27 @@ function pageSize(raw) {
  * @returns the page of commits, whether older commits exist, and whether the capture was cut short.
  */
 async function readCommits(ctx, cwd, limit, signal) {
-  const log = await runGit(ctx, cwd, [
-    'log',
-    '--branches',
-    '--tags',
-    '--remotes',
-    'HEAD',
-    '--topo-order',
-    `--max-count=${String(limit + 1)}`,
-    `--format=${LOG_FORMAT}`,
-  ], signal)
-  if (log.exitCode !== 0) {
+  let log
+  try {
+    log = await git(ctx, cwd, [
+      'log',
+      '--branches',
+      '--tags',
+      '--remotes',
+      'HEAD',
+      '--topo-order',
+      `--max-count=${String(limit + 1)}`,
+      `--format=${LOG_FORMAT}`,
+    ], signal, LOCAL_MS)
+  } catch (error) {
+    signal.throwIfAborted()
+    // The history is optional; a provider failure still leaves the status usable.
+    void error
+    return { commits: [], hasMore: false, degraded: true }
+  }
+  // A deadline or a failed walk reports degraded history; the status read
+  // stays usable, so only the history section reports the failure.
+  if (log.aborted || log.exitCode !== 0) {
     return { commits: [], hasMore: false, degraded: true }
   }
   const all = parseLog(log.stdout)
@@ -234,30 +246,39 @@ function claim(cwd) {
 /**
  * Read which remotes the one-click push includes.
  *
- * Missing config means the choice has never been saved. Git exits 1 for an
- * unset key; any other failure is reported instead of being treated as empty.
+ * One `--get-regexp` reads the flag and the names together, which halves the
+ * process cost of the remote section. Git lowercases the stored key name, so
+ * the match is case-insensitive. Missing config exits 1 and means the choice
+ * has never been saved; any other failure is reported instead of being treated
+ * as empty.
  * @param ctx - host context.
  * @param cwd - working directory.
  * @param signal - request cancellation.
  * @returns the saved names, or `failed` when config could not be read.
  */
 async function readSelection(ctx, cwd, signal) {
-  const flag = await git(ctx, cwd, ['config', '--local', '--get', PUSH_CONFIGURED], signal, LOCAL_MS)
-  if (flag.aborted || (flag.exitCode !== 0 && flag.exitCode !== 1)) {
+  let listed
+  try {
+    listed = await git(ctx, cwd, ['config', '--local', '--get-regexp', SELECTION_PATTERN], signal, LOCAL_MS)
+  } catch (error) {
+    signal.throwIfAborted()
+    void error
     return { failed: true, configured: false, names: [] }
   }
-  const configured = flag.exitCode === 0 && flag.stdout.trim() === 'true'
-  if (!configured) return { failed: false, configured: false, names: [] }
-  const listed = await git(ctx, cwd, ['config', '--local', '--get-all', PUSH_REMOTE], signal, LOCAL_MS)
   if (listed.aborted || (listed.exitCode !== 0 && listed.exitCode !== 1)) {
-    return { failed: true, configured: true, names: [] }
+    return { failed: true, configured: false, names: [] }
   }
+  let configured = false
   const names = []
   for (const line of listed.stdout.split(/\r?\n/)) {
-    const name = line.trim()
-    if (remoteArgOk(name) && !names.includes(name)) names.push(name)
+    const split = line.indexOf(' ')
+    if (split <= 0) continue
+    const key = line.slice(0, split).toLowerCase()
+    const value = line.slice(split + 1).trim()
+    if (key === PUSH_CONFIGURED.toLowerCase()) configured = value === 'true'
+    else if (key === PUSH_REMOTE.toLowerCase() && remoteArgOk(value) && !names.includes(value)) names.push(value)
   }
-  return { failed: false, configured: true, names }
+  return { failed: false, configured, names }
 }
 
 /**
@@ -285,7 +306,31 @@ async function writeSelection(ctx, cwd, names, signal) {
 }
 
 /**
- * List remotes and whether each one is included in the one-click push.
+ * List the remotes one `git remote -v` reports.
+ *
+ * This half is independent of the status read, so the caller runs it beside
+ * that read; the per-remote tracking check stays in {@link remoteRows} because
+ * it needs the branch the status read supplies.
+ * @param ctx - host context.
+ * @param cwd - working directory.
+ * @param signal - request cancellation.
+ * @returns the raw listing, or null when the remotes could not be read.
+ */
+async function readRemoteList(ctx, cwd, signal) {
+  let listed
+  try {
+    listed = await git(ctx, cwd, ['remote', '-v'], signal, LOCAL_MS)
+  } catch (error) {
+    signal.throwIfAborted()
+    void error
+    return null
+  }
+  if (listed.aborted || listed.exitCode !== 0) return null
+  return listed.stdout
+}
+
+/**
+ * Build one row per remote and decide its one-click inclusion.
  *
  * Until the user saves a choice, a remote is included only when this
  * repository already has its remote-tracking ref for the current branch.
@@ -294,16 +339,14 @@ async function writeSelection(ctx, cwd, names, signal) {
  * @param ctx - host context.
  * @param cwd - working directory.
  * @param branch - current branch, or null when there is nothing to track.
+ * @param listed - the raw `git remote -v` output.
+ * @param selection - the saved one-click selection.
  * @param signal - request cancellation.
- * @returns the rows, or `failed` when the list could not be read.
+ * @returns the rows, or `failed` when a tracking check could not be read.
  */
-async function readRemoteRows(ctx, cwd, branch, signal) {
-  const listed = await git(ctx, cwd, ['remote', '-v'], signal, LOCAL_MS)
-  if (listed.aborted || listed.exitCode !== 0) return { remotes: [], failed: true }
-  const selection = await readSelection(ctx, cwd, signal)
-  if (selection.failed) return { remotes: [], failed: true }
+async function remoteRows(ctx, cwd, branch, listed, selection, signal) {
   const rows = []
-  for (const remote of parseRemotes(listed.stdout)) {
+  for (const remote of parseRemotes(listed)) {
     const url = remote.pushUrl ?? remote.fetchUrl ?? ''
     const unsafe = [remote.fetchUrl, remote.pushUrl].some(item => item !== null && remoteUrlUnsafe(item))
     let push = false
@@ -386,7 +429,10 @@ async function pushAll(ctx, cwd, signal) {
   if (head.detached || head.unborn || !branchNameOk(head.branch)) {
     return { status: 409, body: { ok: false, code: 'no-branch' } }
   }
-  const rows = await readRemoteRows(ctx, cwd, head.branch, signal)
+  const listed = await readRemoteList(ctx, cwd, signal)
+  const selection = await readSelection(ctx, cwd, signal)
+  if (listed === null || selection.failed) return { status: 500, body: { ok: false, code: 'failed' } }
+  const rows = await remoteRows(ctx, cwd, head.branch, listed, selection, signal)
   if (rows.failed) return { status: 500, body: { ok: false, code: 'failed' } }
   const targets = rows.remotes.filter(item => item.push)
   if (targets.length === 0) return { status: 409, body: { ok: false, code: 'no-targets' } }
@@ -539,7 +585,10 @@ async function setPushRemotes(ctx, cwd, requested, signal) {
   }
   const repo = await ensureGit(ctx, cwd, signal)
   if (repo !== null) return repo
-  const rows = await readRemoteRows(ctx, cwd, null, signal)
+  const listed = await readRemoteList(ctx, cwd, signal)
+  const selection = await readSelection(ctx, cwd, signal)
+  if (listed === null || selection.failed) return { status: 500, body: { ok: false, code: 'failed' } }
+  const rows = await remoteRows(ctx, cwd, null, listed, selection, signal)
   if (rows.failed) return { status: 500, body: { ok: false, code: 'failed' } }
   const known = new Map(rows.remotes.map(item => [item.name, item]))
   if (names.some(name => known.get(name)?.unsafe === true || !known.has(name))) {
@@ -670,10 +719,41 @@ async function readCommit(ctx, cwd, oid, signal) {
 }
 
 /**
+ * Read the porcelain status and classify its outcome.
+ *
+ * The read carries a deadline. Without one, a stuck index lock, a credential
+ * prompt, or a huge untracked scan would hold the route open and the panel
+ * would never leave its loading state.
+ * @param ctx - host context.
+ * @param cwd - working directory.
+ * @param signal - request cancellation.
+ * @returns the outcome kind, and the raw result when it succeeded.
+ */
+async function readStatus(ctx, cwd, signal) {
+  let status
+  try {
+    status = await git(ctx, cwd, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all'], signal, LOCAL_MS)
+  } catch {
+    signal.throwIfAborted()
+    // Spawn or provider failure; its message may carry host paths, so it is
+    // classified here rather than echoed to the browser.
+    return { kind: 'unavailable' }
+  }
+  if (status.aborted) return { kind: 'timeout' }
+  if (status.exitCode === 0) return { kind: 'ok', status }
+  if (/not a git repository/iu.test(status.stderr)) return { kind: 'not-git' }
+  return { kind: 'failed' }
+}
+
+/**
  * Answer one panel read.
  *
  * The working directory comes from the Session header, never from the request,
- * so a client cannot ask git about an arbitrary directory.
+ * so a client cannot ask git about an arbitrary directory. A read without
+ * `scope=history` runs the status, history, remote-list, and selection reads
+ * together: they share no input, so the panel waits for the slowest one rather
+ * than for their sum. `scope=history` serves only the history window, which is
+ * all a "load more" changes.
  * @param ctx - host context.
  * @param request - the authenticated fetch request.
  * @returns the JSON envelope.
@@ -701,53 +781,64 @@ async function readPanel(ctx, request) {
   }
   const limit = pageSize(url.searchParams.get('limit'))
 
-  let status
-  try {
-    status = await runGit(ctx, cwd, ['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all'], request.signal)
-  } catch {
-    request.signal.throwIfAborted()
-    // Spawn or provider failure; its message may carry host paths, so it is
-    // classified here rather than echoed to the browser.
-    return json({ ok: false, error: 'git could not be run' }, 500)
-  }
-  if (status.exitCode !== 0) {
-    if (/not a git repository/iu.test(status.stderr)) {
-      return json({ ok: true, value: { cwd, state: 'not-git' } })
-    }
-    return json({ ok: false, error: 'git status failed' }, 500)
+  // A larger window cannot change the branch, the changed files, or the
+  // remotes, so this page re-reads one command instead of the whole panel.
+  if (url.searchParams.get('scope') === 'history') {
+    const page = await readCommits(ctx, cwd, limit, request.signal)
+    return json({
+      ok: true,
+      value: {
+        kind: 'history',
+        limit,
+        commits: page.commits,
+        lanes: computeLanes(page.commits),
+        hasMore: page.hasMore && limit < MAX_COMMITS,
+        historyFailed: page.degraded,
+      },
+    })
   }
 
-  const { head, counts, changes } = parseStatus(status.stdout)
-  let commits = []
-  let lanes = []
-  let hasMore = false
-  let historyFailed = false
-  if (!head.unborn) {
-    try {
-      const page = await readCommits(ctx, cwd, limit, request.signal)
-      commits = page.commits
-      lanes = computeLanes(commits)
-      hasMore = page.hasMore
-      historyFailed = page.degraded
-    } catch (error) {
-      request.signal.throwIfAborted()
-      // The history is optional; a failure here still leaves the status usable.
-      void error
-      historyFailed = true
-    }
+  const [statusRead, page, listed, selection] = await Promise.all([
+    readStatus(ctx, cwd, request.signal),
+    readCommits(ctx, cwd, limit, request.signal),
+    readRemoteList(ctx, cwd, request.signal),
+    readSelection(ctx, cwd, request.signal),
+  ])
+  request.signal.throwIfAborted()
+
+  if (statusRead.kind === 'not-git') {
+    return json({ ok: true, value: { cwd, state: 'not-git' } })
   }
+  // A missed deadline is its own outcome, so the panel reports it and can
+  // retry instead of waiting on a command that will not finish.
+  if (statusRead.kind === 'timeout') {
+    return json({ ok: false, code: 'timeout', error: 'git status timed out' }, 504)
+  }
+  if (statusRead.kind === 'unavailable') {
+    return json({ ok: false, error: 'git could not be run' }, 500)
+  }
+  if (statusRead.kind === 'failed') {
+    return json({ ok: false, error: 'git status failed' }, 500)
+  }
+  const { head, counts, changes } = parseStatus(statusRead.status.stdout)
+
+  // An unborn HEAD has no revision to walk, so the page read beside the status
+  // read is discarded rather than reported as failed history.
+  const commits = head.unborn ? [] : page.commits
+  const lanes = head.unborn ? [] : computeLanes(commits)
+  const historyFailed = head.unborn ? false : page.degraded
+  // The page size is capped, so at the cap no further page is served. Reporting
+  // `hasMore` there would leave a control that re-reads and adds nothing.
+  const hasMore = head.unborn ? false : page.hasMore && limit < MAX_COMMITS
 
   const tracked = head.detached || head.unborn || !branchNameOk(head.branch) ? null : head.branch
   let remotes = []
   let remotesFailed = false
-  try {
-    const rows = await readRemoteRows(ctx, cwd, tracked, request.signal)
+  if (listed === null || selection.failed) remotesFailed = true
+  else {
+    const rows = await remoteRows(ctx, cwd, tracked, listed, selection, request.signal)
     remotes = rows.remotes
     remotesFailed = rows.failed
-  } catch (error) {
-    request.signal.throwIfAborted()
-    void error
-    remotesFailed = true
   }
 
   return json({
@@ -763,7 +854,7 @@ async function readPanel(ctx, request) {
       clean: counts.total === 0,
       counts,
       changes: changes.slice(0, MAX_FILES),
-      truncated: changes.length > MAX_FILES || status.lossy,
+      truncated: changes.length > MAX_FILES || statusRead.status.lossy,
       limit,
       commits,
       lanes,
