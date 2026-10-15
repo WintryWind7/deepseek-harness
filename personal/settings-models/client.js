@@ -2,8 +2,9 @@
  * Browser half of @wintry/settings-models.
  *
  * Registers one page into the personal settings shell's `personal.settings.page`
- * slot. It edits providers that already declare models: display name, context
- * window, output cap, which reasoning levels are open, and input modalities.
+ * slot. It edits pi-ai providers that already declare models: display name,
+ * context window, output cap, which reasoning levels are open, and input
+ * modalities.
  * Writes go to the same settings document the official Models page reads.
  * It does not set a model's default reasoning level.
  *
@@ -30,11 +31,11 @@ window.__ModuleLoader__.load({
 
     const zh = {
       nav: '模型',
-      intro: '和官方模型页改的是同一份设置。这里只列已经声明了模型的提供方，改每个模型的显示名、上下文长度、输出上限、开放的思考档位和输入类型。密钥、接口地址和协议仍在官方模型页。',
+      intro: '和官方模型页改的是同一份设置。这里只列把模型声明在 providers/<id>/models 下的提供方，也就是 pi-ai 系；官方 DeepSeek 路由的模型挂在设置节根上，不在这里，请到官方模型页改。改每个模型的显示名、上下文长度、输出上限、开放的思考档位和输入类型。密钥、接口地址和协议仍在官方模型页。',
       loading: '正在读取模型设置…',
       loadFailed: '模型设置读取失败。',
       unavailable: '当前页拿不到模型设置接口。',
-      emptyModels: '还没有已声明模型的提供方。到官方模型页配置，或在 profile 的 cordis.patch.yml 里声明。',
+      emptyModels: '还没有把模型声明在 providers/<id>/models 下的提供方。到官方模型页配置，或在 profile 的 cordis.patch.yml 里声明。',
       readOnly: '当前设置不可写。',
       saved: '已保存。',
       saveFailed: '保存失败。',
@@ -58,11 +59,11 @@ window.__ModuleLoader__.load({
     }
     const en = {
       nav: 'Models',
-      intro: 'This edits the same settings as the official Models page. It lists only providers that already declare models, and edits each model’s display name, context window, output cap, open reasoning levels, and input types. Keys, endpoint URLs, and protocols stay on the official page.',
+      intro: 'This edits the same settings as the official Models page. It lists only providers that declare models under providers/<id>/models — the pi-ai routes; the official DeepSeek routes keep their models at the section root and belong to the official page. It edits each model’s display name, context window, output cap, open reasoning levels, and input types. Keys, endpoint URLs, and protocols stay on the official page.',
       loading: 'Reading model settings…',
       loadFailed: 'Could not read model settings.',
       unavailable: 'The model settings interface is unavailable here.',
-      emptyModels: 'No provider declares models yet. Configure one on the official Models page, or declare it in the profile’s cordis.patch.yml.',
+      emptyModels: 'No provider declares models under providers/<id>/models yet. Configure one on the official Models page, or declare it in the profile’s cordis.patch.yml.',
       readOnly: 'These settings are read-only.',
       saved: 'Saved.',
       saveFailed: 'Could not save.',
@@ -307,6 +308,12 @@ window.__ModuleLoader__.load({
           for (const entry of directory.value ?? []) {
             const namespace = namespaces.get(entry.settingsNs)
             const settingsPath = Array.isArray(entry.settingsPath) ? entry.settingsPath : []
+            // Only pi-ai routes keep their models at `providers/<id>/models`. A provider
+            // addressed at the section root (the official DeepSeek routes, whose entry
+            // declares `settingsPath: []`) keeps them there and names the field
+            // `inputModalities`, so its rows would render controls that write a field the
+            // adapter never reads.
+            if (settingsPath.length === 0) continue
             const profile = namespace === undefined ? undefined : pathGet(namespace.value, settingsPath)
             if (profile === null || typeof profile !== 'object' || !Array.isArray(profile.models)) continue
             if (profile.models.length === 0) continue
